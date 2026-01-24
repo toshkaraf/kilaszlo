@@ -2,7 +2,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class AnthropicService {
-  static const String _apiKey = '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'; // Replace with actual key
+  static const String _apiKey = 'YOUR_ANTHROPIC_API_KEY'; // Replace with actual key from https://console.anthropic.com/ // Replace with actual key
   static const String _apiUrl = 'https://api.anthropic.com/v1/messages';
   static const String _modelId = 'claude-3-5-haiku-20241022'; // Cheap model
 
