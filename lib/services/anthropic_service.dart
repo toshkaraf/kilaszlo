@@ -1,8 +1,10 @@
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 
 class AnthropicService {
-  static const String _apiKey = 'YOUR_ANTHROPIC_API_KEY'; // Replace with actual key from https://console.anthropic.com/ // Replace with actual key
+  // Get API key from environment variables (.env file)
+  static String get _apiKey => dotenv.env['ANTHROPIC_API_KEY'] ?? 'YOUR_ANTHROPIC_API_KEY';
   static const String _apiUrl = 'https://api.anthropic.com/v1/messages';
   static const String _modelId = 'claude-3-5-haiku-20241022'; // Cheap model
 
