@@ -2,14 +2,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class AnthropicService {
-  // Для веба безопаснее передавать ключ через --dart-define при сборке.
-  // Пример:
-  // flutter build web --release --dart-define=ANTHROPIC_API_KEY=sk-ant-...
-  static const String _apiKey = String.fromEnvironment(
-    'ANTHROPIC_API_KEY',
-    defaultValue: 'YOUR_ANTHROPIC_API_KEY',
-  );
-  static const String _apiUrl = 'https://api.anthropic.com/v1/messages';
+  // Вызываем наш backend-прокси на Vercel, который уже ходит в Anthropic.
+  // Веб-клиент больше не хранит и не отправляет API-ключ.
+  static const String _apiUrl = '/api/anthropic';
   static const String _modelId = 'claude-3-5-haiku-20241022'; // Cheap model
 
   Future<String> generateAIResponse(
@@ -27,10 +22,8 @@ class AnthropicService {
 
       final response = await http.post(
         Uri.parse(_apiUrl),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
+        headers: const {
           'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
         },
         body: jsonEncode({
           'model': _modelId,
@@ -61,10 +54,8 @@ class AnthropicService {
 
       final response = await http.post(
         Uri.parse(_apiUrl),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
+        headers: const {
           'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
         },
         body: jsonEncode({
           'model': _modelId,
@@ -103,10 +94,8 @@ class AnthropicService {
 
       final response = await http.post(
         Uri.parse(_apiUrl),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
+        headers: const {
           'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
         },
         body: jsonEncode({
           'model': _modelId,
