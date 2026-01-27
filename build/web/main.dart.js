@@ -64481,7 +64481,7 @@ s=p}while(true)switch(s){case 0:p=4
 i=t.N
 n=A.a([A.ag(["role","user","content",b],i,i)],t.m0)
 h=A.eB("https://api.anthropic.com/v1/messages")
-g=A.ag(["Authorization","Bearer sk-ant-\u0422\u041e\u0419_\u0421\u0410\u041c\u042b\u0419_\u041a\u041b\u042e\u0427","Content-Type","application/json","anthropic-version","2023-06-01"],i,i)
+g=A.ag(["Authorization","Bearer sk-ant-test123","Content-Type","application/json","anthropic-version","2023-06-01"],i,i)
 s=7
 return A.J(A.afx(h,B.ai.mM(A.ag(["model","claude-3-5-haiku-20241022","max_tokens",1024,"messages",n],i,t.K),null),g).qt(B.fV),$async$qG)
 case 7:m=d
@@ -64520,7 +64520,7 @@ s=p}while(true)switch(s){case 0:p=4
 n='\u0414\u043b\u044f \u0442\u0435\u043c\u044b "'+a+'" \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0438 5 \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0439 \u0434\u0430\u043b\u044c\u043d\u0435\u0439\u0448\u0435\u0433\u043e \u0440\u0430\u0437\u0432\u0438\u0442\u0438\u044f \u0431\u0435\u0441\u0435\u0434\u044b \u0432 \u0432\u0438\u0434\u0435 \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0445 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0439 (\u043f\u043e \u043e\u0434\u043d\u043e\u043c\u0443 \u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0443). \u041d\u0443\u043c\u0435\u0440\u043e\u0432\u0430\u0442\u044c \u043d\u0435 \u043d\u0443\u0436\u043d\u043e.'
 i=A.eB("https://api.anthropic.com/v1/messages")
 h=t.N
-g=A.ag(["Authorization","Bearer sk-ant-\u0422\u041e\u0419_\u0421\u0410\u041c\u042b\u0419_\u041a\u041b\u042e\u0427","Content-Type","application/json","anthropic-version","2023-06-01"],h,h)
+g=A.ag(["Authorization","Bearer sk-ant-test123","Content-Type","application/json","anthropic-version","2023-06-01"],h,h)
 s=7
 return A.J(A.afx(i,B.ai.mM(A.ag(["model","claude-3-5-haiku-20241022","max_tokens",500,"messages",A.a([A.ag(["role","user","content",n],h,h)],t.m0)],h,t.K),null),g).qt(B.fV),$async$nA)
 case 7:m=c
@@ -64561,7 +64561,7 @@ s=p}while(true)switch(s){case 0:p=4
 n='\u041d\u0430\u0447\u043d\u0438 \u0443\u0432\u043b\u0435\u043a\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u0439 \u0440\u0430\u0437\u0433\u043e\u0432\u043e\u0440 \u043d\u0430 \u0442\u0435\u043c\u0443 "'+a+'" \u0434\u043b\u044f \u0438\u043d\u0442\u0435\u043b\u043b\u0438\u0433\u0435\u043d\u0442\u043d\u043e\u0433\u043e \u0447\u0435\u043b\u043e\u0432\u0435\u043a\u0430. \u0421\u0434\u0435\u043b\u0430\u0439 \u044d\u0442\u043e \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0442\u0438\u0432\u043d\u043e \u0438 \u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e. \u0414\u043b\u0438\u043d\u0430: 200-300 \u0441\u043b\u043e\u0432.'
 i=A.eB("https://api.anthropic.com/v1/messages")
 h=t.N
-g=A.ag(["Authorization","Bearer sk-ant-\u0422\u041e\u0419_\u0421\u0410\u041c\u042b\u0419_\u041a\u041b\u042e\u0427","Content-Type","application/json","anthropic-version","2023-06-01"],h,h)
+g=A.ag(["Authorization","Bearer sk-ant-test123","Content-Type","application/json","anthropic-version","2023-06-01"],h,h)
 s=7
 return A.J(A.afx(i,B.ai.mM(A.ag(["model","claude-3-5-haiku-20241022","max_tokens",1024,"messages",A.a([A.ag(["role","user","content",n],h,h)],t.m0)],h,t.K),null),g).qt(B.fV),$async$qH)
 case 7:m=c
