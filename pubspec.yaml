@@ -45,7 +45,8 @@ dependencies:
   json_annotation: ^4.8.1
   
   # Text to speech
-  flutter_tts: ^8.4.0
+  # Используем совместимую версию, рекомендуемую pub:
+  flutter_tts: ^4.2.5
   
   # State management
   provider: ^6.1.0
