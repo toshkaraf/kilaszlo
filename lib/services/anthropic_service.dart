@@ -1,10 +1,14 @@
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 
 class AnthropicService {
-  // Get API key from environment variables (.env file)
-  static String get _apiKey => dotenv.env['ANTHROPIC_API_KEY'] ?? 'YOUR_ANTHROPIC_API_KEY';
+  // Для веба безопаснее передавать ключ через --dart-define при сборке.
+  // Пример:
+  // flutter build web --release --dart-define=ANTHROPIC_API_KEY=sk-ant-...
+  static const String _apiKey = String.fromEnvironment(
+    'ANTHROPIC_API_KEY',
+    defaultValue: 'YOUR_ANTHROPIC_API_KEY',
+  );
   static const String _apiUrl = 'https://api.anthropic.com/v1/messages';
   static const String _modelId = 'claude-3-5-haiku-20241022'; // Cheap model
 
