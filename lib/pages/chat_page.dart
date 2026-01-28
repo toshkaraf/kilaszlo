@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import '../providers/chat_provider.dart';
+import '../providers/language_provider.dart';
+import '../services/chat_storage_service.dart';
+import '../l10n/app_localizations.dart';
 import '../models/chat.dart';
+import '../models/theme_data.dart';
 
 class ChatPage extends StatefulWidget {
   final Chat chat;
@@ -18,6 +22,9 @@ class _ChatPageState extends State<ChatPage> {
   late ScrollController _scrollController;
   String? _currentlyPlayingMessageId;
   bool _isSpeaking = false;
+  bool _autoPlay = false;
+  String? _lastAIMessageId;
+  double _speechRate = 0.53;
 
   @override
   void initState() {
@@ -30,8 +37,13 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _initTts() async {
-    await _tts.setLanguage('ru_RU');
-    await _tts.setSpeechRate(0.8);
+    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final storage = Provider.of<ChatStorageService>(context, listen: false);
+    final languageCode = languageProvider.languageCode;
+    await _tts.setLanguage(languageCode);
+    final rate = await storage.getSpeechRate();
+    await _tts.setSpeechRate(rate);
+    if (mounted) setState(() => _speechRate = rate);
 
     _tts.setStartHandler(() {
       setState(() => _isSpeaking = true);
@@ -43,6 +55,50 @@ class _ChatPageState extends State<ChatPage> {
         _currentlyPlayingMessageId = null;
       });
     });
+  }
+
+  Future<void> _showSpeechRateDialog(AppLocalizations l10n) async {
+    final storage = Provider.of<ChatStorageService>(context, listen: false);
+    double value = _speechRate;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(l10n.speechSpeed),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Slider(
+                value: value,
+                min: 0.3,
+                max: 1.2,
+                divisions: 18,
+                onChanged: (v) {
+                  value = v;
+                  setDialogState(() {});
+                  _tts.setSpeechRate(v);
+                  storage.setSpeechRate(v);
+                },
+              ),
+              Text(value.toStringAsFixed(2)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() => _speechRate = value);
+  }
+
+  Future<void> _updateTtsLanguage() async {
+    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final languageCode = languageProvider.languageCode;
+    await _tts.setLanguage(languageCode);
   }
 
   Future<void> _speak(String text, String messageId) async {
@@ -58,6 +114,20 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Future<void> _repeatLastMessage() async {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    final messages = chatProvider.currentChat?.messages ?? [];
+    if (messages.isNotEmpty) {
+      final lastAIMessage = messages.reversed.firstWhere(
+        (m) => !m.isUser,
+        orElse: () => messages.last,
+      );
+      if (!lastAIMessage.isUser) {
+        await _speak(lastAIMessage.text, lastAIMessage.id);
+      }
+    }
+  }
+
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -65,6 +135,21 @@ class _ChatPageState extends State<ChatPage> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    }
+  }
+
+  void _checkAndAutoPlay(ChatProvider chatProvider) {
+    if (_autoPlay && !chatProvider.isLoading) {
+      final messages = chatProvider.currentChat?.messages ?? [];
+      if (messages.isNotEmpty) {
+        final lastMessage = messages.last;
+        if (!lastMessage.isUser && lastMessage.id != _lastAIMessageId) {
+          _lastAIMessageId = lastMessage.id;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _speak(lastMessage.text, lastMessage.id);
+          });
+        }
+      }
     }
   }
 
@@ -77,9 +162,21 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChatProvider>(
-      builder: (context, chatProvider, _) {
+    return Consumer2<ChatProvider, LanguageProvider>(
+      builder: (context, chatProvider, languageProvider, _) {
         final messages = chatProvider.currentChat?.messages ?? [];
+        final l10n = AppLocalizations(languageProvider.currentLanguage);
+        
+        // Update TTS language when language changes
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _updateTtsLanguage();
+        });
+        
+        // Update AI service language
+        chatProvider.updateLanguage(languageProvider.currentLanguage);
+        
+        // Check for auto-play
+        _checkAndAutoPlay(chatProvider);
 
         return WillPopScope(
           onWillPop: () async {
@@ -88,30 +185,77 @@ class _ChatPageState extends State<ChatPage> {
           },
           child: Scaffold(
             appBar: AppBar(
-              title: Text(
-                chatProvider.selectedTopic?.name ?? 'Чат',
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              title: Builder(
+                builder: (context) {
+                  final topic = chatProvider.selectedTopic;
+                  final chat = chatProvider.currentChat;
+                  String title;
+                  if (topic != null) {
+                    if (chat?.parentTopicName != null) {
+                      final parentTopic = Topic(id: '', name: chat!.parentTopicName!);
+                      title = '${parentTopic.getName(languageProvider.isGerman)} - ${topic.getName(languageProvider.isGerman)}';
+                    } else {
+                      title = topic.getName(languageProvider.isGerman);
+                    }
+                  } else {
+                    title = l10n.chat;
+                  }
+                  return Text(
+                    title,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  );
+                },
               ),
               backgroundColor: const Color(0xFF3498DB),
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
                   chatProvider.clearSelection();
-                  Navigator.pop(context);
+                  // Возвращаемся на стартовый экран (HomePage)
+                  Navigator.of(context).popUntil((route) => route.isFirst);
                 },
               ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.speed),
+                  tooltip: l10n.speechSpeed,
+                  onPressed: () => _showSpeechRateDialog(l10n),
+                ),
+                IconButton(
+                  icon: Icon(
+                    _autoPlay ? Icons.volume_up : Icons.volume_off,
+                    color: _autoPlay ? Colors.white : Colors.white70,
+                  ),
+                  tooltip: l10n.autoPlay,
+                  onPressed: () {
+                    setState(() {
+                      _autoPlay = !_autoPlay;
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.repeat),
+                  tooltip: l10n.repeatLast,
+                  onPressed: _repeatLastMessage,
+                ),
+              ],
             ),
-            body: Column(
-              children: [
-                // Messages list
-                Expanded(
-                  child: messages.isEmpty
-                      ? const Center(
-                          child: CircularProgressIndicator(),
+            body: SingleChildScrollView(
+              controller: _scrollController,
+              child: Column(
+                children: [
+                  // Messages list
+                  messages.isEmpty
+                      ? const SizedBox(
+                          height: 400,
+                          child: Center(
+                            child: CircularProgressIndicator(),
+                          ),
                         )
                       : ListView.builder(
-                          controller: _scrollController,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
                           padding: const EdgeInsets.all(16),
                           itemCount: messages.length,
                           itemBuilder: (context, index) {
@@ -120,40 +264,41 @@ class _ChatPageState extends State<ChatPage> {
                               context,
                               message,
                               chatProvider,
+                              l10n,
                             );
                           },
                         ),
-                ),
 
-                // Suggested responses or input
-                if (messages.isNotEmpty && !messages.last.isUser)
-                  _buildSuggestedResponses(context, messages.last, chatProvider),
+                  // Suggested responses or input
+                  if (messages.isNotEmpty && !messages.last.isUser)
+                    _buildSuggestedResponses(context, messages.last, chatProvider, l10n, languageProvider),
 
-                // Loading indicator
-                if (chatProvider.isLoading)
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: const CircularProgressIndicator(),
-                  ),
+                  // Loading indicator
+                  if (chatProvider.isLoading)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: const CircularProgressIndicator(),
+                    ),
 
-                // Error message
-                if (chatProvider.errorMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red),
-                      ),
-                      child: Text(
-                        chatProvider.errorMessage!,
-                        style: const TextStyle(color: Colors.red),
+                  // Error message
+                  if (chatProvider.errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red),
+                        ),
+                        child: Text(
+                          chatProvider.errorMessage!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -165,6 +310,7 @@ class _ChatPageState extends State<ChatPage> {
     BuildContext context,
     ChatMessage message,
     ChatProvider chatProvider,
+    AppLocalizations l10n,
   ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -192,7 +338,7 @@ class _ChatPageState extends State<ChatPage> {
                   child: Text(
                     message.text,
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 20,
                       color: message.isUser ? Colors.white : Colors.black87,
                       height: 1.4,
                     ),
@@ -210,8 +356,7 @@ class _ChatPageState extends State<ChatPage> {
                             ? Colors.red
                             : const Color(0xFF27AE60),
                         child: InkWell(
-                          onTap: () =>
-                              _speak(message.text, message.id),
+                          onTap: () => _speak(message.text, message.id),
                           borderRadius: BorderRadius.circular(25),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
@@ -230,8 +375,8 @@ class _ChatPageState extends State<ChatPage> {
                                 const SizedBox(width: 8),
                                 Text(
                                   _currentlyPlayingMessageId == message.id
-                                      ? 'СТОП'
-                                      : 'ОЗВУЧИТЬ',
+                                      ? l10n.stop
+                                      : l10n.speak,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.bold,
@@ -257,6 +402,8 @@ class _ChatPageState extends State<ChatPage> {
     BuildContext context,
     ChatMessage lastMessage,
     ChatProvider chatProvider,
+    AppLocalizations l10n,
+    LanguageProvider languageProvider,
   ) {
     final suggestions = lastMessage.suggestedResponses ?? [];
 
@@ -272,15 +419,18 @@ class _ChatPageState extends State<ChatPage> {
             color: const Color(0xFF3498DB),
             child: InkWell(
               onTap: () async {
-                await chatProvider.sendMessage('Продолжи разговор');
+                final continueText = l10n.isGerman 
+                    ? 'Setze das Gespräch fort' 
+                    : 'Продолжи разговор';
+                await chatProvider.sendMessage(continueText, language: languageProvider.currentLanguage);
               },
               borderRadius: BorderRadius.circular(12),
-              child: const Center(
+              child: Center(
                 child: Text(
-                  'ПРОДОЛЖИТЬ РАЗГОВОР',
-                  style: TextStyle(
+                  l10n.continueChat,
+                  style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 18,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -304,7 +454,7 @@ class _ChatPageState extends State<ChatPage> {
                     color: const Color(0xFF27AE60),
                     child: InkWell(
                       onTap: () async {
-                        await chatProvider.sendMessage(suggestion);
+                        await chatProvider.sendMessage(suggestion, language: languageProvider.currentLanguage);
                         _scrollToBottom();
                       },
                       borderRadius: BorderRadius.circular(12),
@@ -314,7 +464,7 @@ class _ChatPageState extends State<ChatPage> {
                           suggestion,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 16,
+                            fontSize: 20,
                             fontWeight: FontWeight.w600,
                             height: 1.3,
                           ),

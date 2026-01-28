@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services/chat_storage_service.dart';
 import 'providers/chat_provider.dart';
+import 'providers/language_provider.dart';
 import 'pages/home_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
 
   // Initialize storage service
   final storageService = ChatStorageService();
@@ -15,6 +20,9 @@ void main() async {
     MultiProvider(
       providers: [
         Provider<ChatStorageService>(create: (_) => storageService),
+        ChangeNotifierProvider(
+          create: (_) => LanguageProvider(),
+        ),
         ChangeNotifierProvider(
           create: (_) => ChatProvider(storageService: storageService),
         ),
@@ -30,7 +38,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'KILASZLO',
+      title: 'KI-LASZLO',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,

@@ -3,11 +3,16 @@ import '../models/theme_data.dart';
 import '../models/chat.dart';
 import '../services/chat_storage_service.dart';
 import '../services/anthropic_service.dart';
+import 'language_provider.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ChatStorageService storageService;
   final AnthropicService aiService = AnthropicService();
+  
+  void updateLanguage(AppLanguage language) {
+    aiService.setLanguage(language);
+  }
 
   Chat? currentChat;
   List<Chat> chatHistory = [];
@@ -18,6 +23,8 @@ class ChatProvider extends ChangeNotifier {
   String? errorMessage;
 
   ChatProvider({required this.storageService}) {
+    // Устанавливаем немецкий язык по умолчанию для AI сервиса
+    aiService.setLanguage(AppLanguage.german);
     _init();
   }
 
@@ -26,22 +33,37 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startNewChat(Topic topic) async {
+  Future<void> startNewChat(Topic topic, {AppLanguage? language, Topic? parentTopic}) async {
     isLoading = true;
     errorMessage = null;
     notifyListeners();
 
     try {
       selectedTopic = topic;
-      currentChat = await storageService.createNewChat(topic.id, topic.name);
+      final isGerman = language == AppLanguage.german;
+      final parentName = parentTopic?.getName(isGerman);
+      final topicName = topic.getName(isGerman);
+      final fullTopicName = parentName != null 
+          ? '$parentName - $topicName'
+          : topicName;
+      currentChat = await storageService.createNewChat(
+        topic.id, 
+        topicName,
+        parentTopicName: parentName,
+      );
+
+      // Update language if provided
+      if (language != null) {
+        aiService.setLanguage(language);
+      }
 
       // Get initial message from AI
       final initialMessage =
-          await aiService.generateInitialMessage(topic.name);
+          await aiService.generateInitialMessage(fullTopicName);
       
       // Get suggested responses
       final suggestions =
-          await aiService.generateSuggestedResponses(topic.name);
+          await aiService.generateSuggestedResponses(fullTopicName);
 
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -63,7 +85,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> sendMessage(String userText) async {
+  Future<void> sendMessage(String userText, {AppLanguage? language}) async {
     if (currentChat == null) return;
 
     isLoading = true;
@@ -71,6 +93,11 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update language if provided
+      if (language != null) {
+        aiService.setLanguage(language);
+      }
+
       // Add user message
       final userMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -81,14 +108,29 @@ class ChatProvider extends ChangeNotifier {
 
       await storageService.addMessageToChat(currentChat!.id, userMessage);
 
+      final isGerman = language == AppLanguage.german;
+      final defaultTopic = isGerman ? 'Allgemeine Information' : 'Общая информация';
+      
+      // Формируем полное название темы: основная тема + подтема (если есть)
+      String fullTopicName;
+      if (currentChat!.parentTopicName != null && selectedTopic != null) {
+        final parentName = currentChat!.parentTopicName!;
+        final subtopicName = selectedTopic!.getName(isGerman);
+        fullTopicName = '$parentName - $subtopicName';
+      } else {
+        fullTopicName = selectedTopic?.getName(isGerman) ?? defaultTopic;
+      }
+
       // Get AI response
       final aiResponse = await aiService.generateAIResponse(
-        selectedTopic?.name ?? 'Общая информация',
+        fullTopicName,
         userText,
       );
 
       // Get suggested responses for next turn
-      final suggestions = await aiService.generateSuggestedResponses(userText);
+      final suggestions = await aiService.generateSuggestedResponses(
+        fullTopicName,
+      );
 
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -113,6 +155,7 @@ class ChatProvider extends ChangeNotifier {
   Future<void> loadChat(Chat chat) async {
     currentChat = chat;
     selectedTopic = Topic(id: chat.topicId, name: chat.topicName);
+    // Если есть parentTopicName, это была подтема, но selectedTopic хранит подтему
     notifyListeners();
   }
 

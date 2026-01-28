@@ -5,6 +5,8 @@ import '../models/chat.dart';
 
 class ChatStorageService {
   static const String _chatsKey = 'kilaszlo_chats';
+  static const String _speechRateKey = 'kilaszlo_speech_rate';
+  static const double _defaultSpeechRate = 0.53; // 1.5× langsamer als 0.8
   late SharedPreferences _prefs;
 
   Future<void> init() async {
@@ -50,12 +52,13 @@ class ChatStorageService {
     await _prefs.setStringList(_chatsKey, chatsJson);
   }
 
-  Future<Chat> createNewChat(String topicId, String topicName) async {
+  Future<Chat> createNewChat(String topicId, String topicName, {String? parentTopicName}) async {
     final now = DateTime.now();
     final chat = Chat(
       id: const Uuid().v4(),
       topicId: topicId,
       topicName: topicName,
+      parentTopicName: parentTopicName,
       createdAt: now,
       lastUpdated: now,
       messages: [],
@@ -72,6 +75,7 @@ class ChatStorageService {
         id: chat.id,
         topicId: chat.topicId,
         topicName: chat.topicName,
+        parentTopicName: chat.parentTopicName,
         createdAt: chat.createdAt,
         lastUpdated: DateTime.now(),
         messages: [...chat.messages, message],
@@ -82,5 +86,14 @@ class ChatStorageService {
 
   Future<void> clearAllChats() async {
     await _prefs.remove(_chatsKey);
+  }
+
+  Future<double> getSpeechRate() async {
+    final v = _prefs.getDouble(_speechRateKey);
+    return v ?? _defaultSpeechRate;
+  }
+
+  Future<void> setSpeechRate(double value) async {
+    await _prefs.setDouble(_speechRateKey, value);
   }
 }

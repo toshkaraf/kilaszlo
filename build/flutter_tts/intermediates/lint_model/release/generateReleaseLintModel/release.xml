@@ -1,0 +1,31 @@
+<variant
+    name="release"
+    package="com.eyedeadevelopment.fluttertts"
+    minSdkVersion="24"
+    targetSdkVersion="24"
+    mergedManifest="C:\dev\projects\kilaszlo\build\flutter_tts\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml"
+    manifestMergeReport="C:\dev\projects\kilaszlo\build\flutter_tts\outputs\logs\manifest-merger-release-report.txt"
+    proguardFiles="C:\dev\projects\kilaszlo\build\flutter_tts\intermediates\default_proguard_files\global\proguard-android.txt-8.7.0"
+    partialResultsDir="C:\dev\projects\kilaszlo\build\flutter_tts\intermediates\lint_partial_results\release\lintAnalyzeRelease\out">
+  <buildFeatures
+      namespacing="REQUIRED"/>
+  <sourceProviders>
+    <sourceProvider
+        manifests="src\main\AndroidManifest.xml"
+        javaDirectories="src\main\java;src\release\java;src\main\kotlin;src\release\kotlin"
+        resDirectories="src\main\res;src\release\res"
+        assetsDirectories="src\main\assets;src\release\assets"/>
+  </sourceProviders>
+  <testSourceProviders>
+  </testSourceProviders>
+  <testFixturesSourceProviders>
+  </testFixturesSourceProviders>
+  <artifact
+      classOutputs="C:\dev\projects\kilaszlo\build\flutter_tts\intermediates\javac\release\compileReleaseJavaWithJavac\classes;C:\dev\projects\kilaszlo\build\flutter_tts\tmp\kotlin-classes\release;C:\dev\projects\kilaszlo\build\flutter_tts\intermediates\compile_r_class_jar\release\generateReleaseRFile\R.jar"
+      type="MAIN"
+      applicationId="com.eyedeadevelopment.fluttertts"
+      generatedSourceFolders="C:\dev\projects\kilaszlo\build\flutter_tts\generated\ap_generated_sources\release\out"
+      generatedResourceFolders="C:\dev\projects\kilaszlo\build\flutter_tts\generated\res\resValues\release"
+      desugaredMethodsFiles="C:\Users\Envy x360\.gradle\caches\8.10.2\transforms\883e2f6152bf983c3773cf6413ff18c4\transformed\D8BackportedDesugaredMethods.txt">
+  </artifact>
+</variant>

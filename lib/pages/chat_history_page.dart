@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/chat_provider.dart';
+import '../providers/language_provider.dart';
+import '../models/theme_data.dart';
+import '../l10n/app_localizations.dart';
 
 class ChatHistoryPage extends StatelessWidget {
   const ChatHistoryPage({Key? key}) : super(key: key);
@@ -10,16 +13,23 @@ class ChatHistoryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('История чатов'),
+        title: Consumer<LanguageProvider>(
+          builder: (context, languageProvider, _) {
+            final l10n = AppLocalizations(languageProvider.currentLanguage);
+            return Text(l10n.chatHistory);
+          },
+        ),
         backgroundColor: const Color(0xFF27AE60),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: Consumer<ChatProvider>(
-        builder: (context, chatProvider, _) {
+      body: Consumer2<ChatProvider, LanguageProvider>(
+        builder: (context, chatProvider, languageProvider, _) {
           final chats = chatProvider.chatHistory;
+          final l10n = AppLocalizations(languageProvider.currentLanguage);
+          final isGerman = languageProvider.isGerman;
 
           if (chats.isEmpty) {
             return Center(
@@ -33,7 +43,7 @@ class ChatHistoryPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'История чатов пуста',
+                    isGerman ? 'Chat-Verlauf ist leer' : 'История чатов пуста',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           color: Colors.grey,
                         ),
@@ -48,9 +58,9 @@ class ChatHistoryPage extends StatelessWidget {
                         vertical: 16,
                       ),
                     ),
-                    child: const Text(
-                      'Начать новый чат',
-                      style: TextStyle(
+                    child: Text(
+                      isGerman ? 'Neuen Chat beginnen' : 'Начать новый чат',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                       ),
@@ -66,7 +76,7 @@ class ChatHistoryPage extends StatelessWidget {
             itemCount: chats.length,
             itemBuilder: (context, index) {
               final chat = chats[chats.length - 1 - index]; // Reverse order
-              return _buildChatTile(context, chat, chatProvider);
+              return _buildChatTile(context, chat, chatProvider, isGerman, l10n);
             },
           );
         },
@@ -78,9 +88,24 @@ class ChatHistoryPage extends StatelessWidget {
     BuildContext context,
     dynamic chat,
     ChatProvider chatProvider,
+    bool isGerman,
+    AppLocalizations l10n,
   ) {
     final dateFormat = DateFormat('dd.MM.yyyy HH:mm');
     final formattedDate = dateFormat.format(chat.lastUpdated);
+    
+    // Получаем переведенное название темы
+    String displayTopicName = chat.topicName;
+    if (chat.parentTopicName != null) {
+      // Если есть родительская тема, показываем оба
+      final parentTopic = Topic(id: '', name: chat.parentTopicName);
+      final subtopic = Topic(id: chat.topicId, name: chat.topicName);
+      displayTopicName = '${parentTopic.getName(isGerman)} - ${subtopic.getName(isGerman)}';
+    } else {
+      // Иначе используем перевод для основной темы
+      final topic = Topic(id: chat.topicId, name: chat.topicName);
+      displayTopicName = topic.getName(isGerman);
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -114,7 +139,7 @@ class ChatHistoryPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        chat.topicName,
+                        displayTopicName,
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -133,7 +158,9 @@ class ChatHistoryPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${chat.messages.length} сообщений',
+                        isGerman 
+                            ? '${chat.messages.length} Nachrichten'
+                            : '${chat.messages.length} сообщений',
                         style: const TextStyle(
                           fontSize: 13,
                           color: Color(0xFFBDC3C7),
@@ -146,13 +173,14 @@ class ChatHistoryPage extends StatelessWidget {
                 PopupMenuButton(
                   itemBuilder: (BuildContext context) => [
                     PopupMenuItem(
-                      child: const Text('Удалить'),
+                      child: Text(isGerman ? 'Löschen' : 'Удалить'),
                       onTap: () {
                         _showDeleteConfirmation(
                           context,
                           chat.id,
-                          chat.topicName,
+                          displayTopicName,
                           chatProvider,
+                          isGerman,
                         );
                       },
                     ),
@@ -175,32 +203,35 @@ class ChatHistoryPage extends StatelessWidget {
     String chatId,
     String chatName,
     ChatProvider chatProvider,
+    bool isGerman,
   ) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Удалить чат?'),
-          content: Text('Вы уверены, что хотите удалить чат "$chatName"?'),
+          title: Text(isGerman ? 'Chat löschen?' : 'Удалить чат?'),
+          content: Text(isGerman 
+              ? 'Sind Sie sicher, dass Sie den Chat "$chatName" löschen möchten?'
+              : 'Вы уверены, что хотите удалить чат "$chatName"?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
+              child: Text(isGerman ? 'Abbrechen' : 'Отмена'),
             ),
             TextButton(
               onPressed: () {
                 chatProvider.deleteChat(chatId);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Чат удален'),
-                    duration: Duration(seconds: 2),
+                  SnackBar(
+                    content: Text(isGerman ? 'Chat gelöscht' : 'Чат удален'),
+                    duration: const Duration(seconds: 2),
                   ),
                 );
               },
-              child: const Text(
-                'Удалить',
-                style: TextStyle(color: Colors.red),
+              child: Text(
+                isGerman ? 'Löschen' : 'Удалить',
+                style: const TextStyle(color: Colors.red),
               ),
             ),
           ],

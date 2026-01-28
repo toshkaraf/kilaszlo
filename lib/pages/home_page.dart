@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
+import '../providers/language_provider.dart';
+import '../l10n/app_localizations.dart';
 import 'theme_selector_page.dart';
 import 'chat_page.dart';
 import 'chat_history_page.dart';
@@ -12,8 +14,10 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      body: Consumer<ChatProvider>(
-        builder: (context, chatProvider, _) {
+      body: Consumer2<ChatProvider, LanguageProvider>(
+        builder: (context, chatProvider, languageProvider, _) {
+          final l10n = AppLocalizations(languageProvider.currentLanguage);
+          
           // If in chat, show chat page
           if (chatProvider.currentChat != null) {
             return ChatPage(chat: chatProvider.currentChat!);
@@ -30,7 +34,7 @@ class HomePage extends StatelessWidget {
                     SizedBox(height: 40),
                     // App Title
                     Text(
-                      'KILASZLO',
+                      l10n.appTitle,
                       style: Theme.of(context).textTheme.displayLarge?.copyWith(
                             fontSize: 48,
                             fontWeight: FontWeight.bold,
@@ -40,7 +44,7 @@ class HomePage extends StatelessWidget {
                     ),
                     SizedBox(height: 16),
                     Text(
-                      'Интеллектуальный чат-сервис',
+                      l10n.appSubtitle,
                       style:
                           Theme.of(context).textTheme.titleMedium?.copyWith(
                                 color: const Color(0xFF7F8C8D),
@@ -52,7 +56,7 @@ class HomePage extends StatelessWidget {
                     // Main action buttons
                     _buildLargeButton(
                       context,
-                      label: 'ВЫБРАТЬ ТЕМУ',
+                      label: l10n.selectTheme,
                       icon: Icons.topic,
                       onPressed: () {
                         Navigator.of(context).push(
@@ -62,21 +66,43 @@ class HomePage extends StatelessWidget {
                         );
                       },
                     ),
-                    SizedBox(height: 24),
-                    _buildLargeButton(
-                      context,
-                      label: 'ИСТОРИЯ ЧАТОВ',
-                      icon: Icons.history,
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const ChatHistoryPage(),
+                    SizedBox(height: 40),
+
+                    // Language switch button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: Material(
+                        elevation: 4,
+                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFF9B59B6),
+                        child: InkWell(
+                          onTap: () {
+                            languageProvider.toggleLanguage();
+                            chatProvider.updateLanguage(languageProvider.currentLanguage);
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Center(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.language, color: Colors.white, size: 24),
+                                SizedBox(width: 12),
+                                Text(
+                                  l10n.switchLanguage,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        );
-                      },
-                      backgroundColor: const Color(0xFF27AE60),
+                        ),
+                      ),
                     ),
-                    SizedBox(height: 60),
+                    SizedBox(height: 40),
 
                     // Info text
                     Container(
@@ -92,7 +118,7 @@ class HomePage extends StatelessWidget {
                         ],
                       ),
                       child: Text(
-                        'Выберите интересующую вас тему и начните увлекательный разговор с ИИ. Информация охватывает историю, науку, технологию, философию, литературу и многое другое.',
+                        l10n.homeInfo,
                         style:
                             Theme.of(context).textTheme.bodyLarge?.copyWith(
                                   color: const Color(0xFF34495E),

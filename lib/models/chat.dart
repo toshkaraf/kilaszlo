@@ -40,6 +40,7 @@ class Chat {
   final String id;
   final String topicId;
   final String topicName;
+  final String? parentTopicName; // Основная тема, если выбрана подтема
   final DateTime createdAt;
   final DateTime lastUpdated;
   final List<ChatMessage> messages;
@@ -48,6 +49,7 @@ class Chat {
     required this.id,
     required this.topicId,
     required this.topicName,
+    this.parentTopicName,
     required this.createdAt,
     required this.lastUpdated,
     required this.messages,
@@ -58,6 +60,7 @@ class Chat {
       'id': id,
       'topicId': topicId,
       'topicName': topicName,
+      'parentTopicName': parentTopicName,
       'createdAt': createdAt.toIso8601String(),
       'lastUpdated': lastUpdated.toIso8601String(),
       'messages': messages.map((m) => m.toJson()).toList(),
@@ -69,6 +72,7 @@ class Chat {
       id: json['id'] as String,
       topicId: json['topicId'] as String,
       topicName: json['topicName'] as String,
+      parentTopicName: json['parentTopicName'] as String?,
       createdAt: DateTime.parse(json['createdAt'] as String),
       lastUpdated: DateTime.parse(json['lastUpdated'] as String),
       messages: (json['messages'] as List)
