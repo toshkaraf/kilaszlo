@@ -4,6 +4,8 @@ class ChatMessage {
   final DateTime timestamp;
   final bool isUser;
   final List<String>? suggestedResponses;
+  /// URL иллюстрации по теме (для ответов ИИ).
+  final String? imageUrl;
 
   ChatMessage({
     required this.id,
@@ -11,6 +13,7 @@ class ChatMessage {
     required this.timestamp,
     required this.isUser,
     this.suggestedResponses,
+    this.imageUrl,
   });
 
   Map<String, dynamic> toJson() {
@@ -20,6 +23,7 @@ class ChatMessage {
       'timestamp': timestamp.toIso8601String(),
       'isUser': isUser,
       'suggestedResponses': suggestedResponses,
+      'imageUrl': imageUrl,
     };
   }
 
@@ -32,6 +36,7 @@ class ChatMessage {
       suggestedResponses: json['suggestedResponses'] != null
           ? List<String>.from(json['suggestedResponses'] as List)
           : null,
+      imageUrl: json['imageUrl'] as String?,
     );
   }
 }

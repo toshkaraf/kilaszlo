@@ -42,13 +42,15 @@ class ThemeSelectorPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: themeCategories.length,
-        itemBuilder: (context, index) {
-          final category = themeCategories[index];
-          return _buildCategoryTile(context, category, chatProvider);
-        },
+      body: SafeArea(
+        child: ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: themeCategories.length,
+          itemBuilder: (context, index) {
+            final category = themeCategories[index];
+            return _buildCategoryTile(context, category, chatProvider);
+          },
+        ),
       ),
     );
   }
@@ -133,14 +135,16 @@ class ThemeSelectorPage extends StatelessWidget {
           },
         ),
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: category.subcategories.length,
-        itemBuilder: (context, index) {
-          final subcategory = category.subcategories[index];
-          return _buildSubcategoryTile(
-              context, subcategory, chatProvider, category);
-        },
+      body: SafeArea(
+        child: ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: category.subcategories.length,
+          itemBuilder: (context, index) {
+            final subcategory = category.subcategories[index];
+            return _buildSubcategoryTile(
+                context, subcategory, chatProvider, category);
+          },
+        ),
       ),
     );
   }
@@ -224,13 +228,15 @@ class ThemeSelectorPage extends StatelessWidget {
           },
         ),
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: subcategory.topics.length,
-        itemBuilder: (context, index) {
-          final topic = subcategory.topics[index];
-          return _buildTopicTile(context, topic, chatProvider);
-        },
+      body: SafeArea(
+        child: ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: subcategory.topics.length,
+          itemBuilder: (context, index) {
+            final topic = subcategory.topics[index];
+            return _buildTopicTile(context, topic, chatProvider);
+          },
+        ),
       ),
     );
   }
@@ -361,7 +367,8 @@ class SubtopicSelectorPage extends StatelessWidget {
         title: Text(parentTopic.getName(isGerman)),
         backgroundColor: const Color(0xFF3498DB),
       ),
-      body: Consumer<ChatProvider>(
+      body: SafeArea(
+        child: Consumer<ChatProvider>(
         builder: (context, chatProvider, _) {
           return ListView.builder(
             padding: const EdgeInsets.all(16),
@@ -429,6 +436,7 @@ class SubtopicSelectorPage extends StatelessWidget {
             },
           );
         },
+        ),
       ),
     );
   }

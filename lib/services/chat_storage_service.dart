@@ -6,7 +6,7 @@ import '../models/chat.dart';
 class ChatStorageService {
   static const String _chatsKey = 'kilaszlo_chats';
   static const String _speechRateKey = 'kilaszlo_speech_rate';
-  static const double _defaultSpeechRate = 0.53; // 1.5× langsamer als 0.8
+  static const double _defaultSpeechRate = 0.4; // ещё на четверть медленнее прежнего 0.53
   late SharedPreferences _prefs;
 
   Future<void> init() async {

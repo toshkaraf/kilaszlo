@@ -40,6 +40,7 @@ class AppLocalizations {
   String get apiKeyNotFound => isGerman 
       ? 'Fehler: API-Schlüssel nicht in .env-Datei gefunden' 
       : 'Ошибка: API ключ не найден в .env файле';
+  String get retry => isGerman ? 'Erneut versuchen' : 'Повторить';
 }
 
 extension AppLocalizationsExtension on BuildContext {

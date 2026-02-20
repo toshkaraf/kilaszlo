@@ -1,14 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/theme_data.dart';
 import '../models/chat.dart';
 import '../services/chat_storage_service.dart';
-import '../services/anthropic_service.dart';
+import '../services/gemini_service.dart';
+import '../services/unsplash_image_service.dart';
 import 'language_provider.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ChatStorageService storageService;
-  final AnthropicService aiService = AnthropicService();
+  final GeminiService aiService = GeminiService();
   
   void updateLanguage(AppLanguage language) {
     aiService.setLanguage(language);
@@ -21,6 +23,9 @@ class ChatProvider extends ChangeNotifier {
   Topic? selectedTopic;
   bool isLoading = false;
   String? errorMessage;
+  /// Для кнопки «Повторить» после ошибки (например квота).
+  String? _lastUserMessage;
+  AppLanguage? _lastLanguage;
 
   ChatProvider({required this.storageService}) {
     // Устанавливаем немецкий язык по умолчанию для AI сервиса
@@ -57,13 +62,15 @@ class ChatProvider extends ChangeNotifier {
         aiService.setLanguage(language);
       }
 
-      // Get initial message from AI
+      // Intro, 5 Fakten und optional ein Bild zur Thema parallel
       final initialMessage =
           await aiService.generateInitialMessage(fullTopicName);
-      
-      // Get suggested responses
-      final suggestions =
-          await aiService.generateSuggestedResponses(fullTopicName);
+      final results = await Future.wait([
+        aiService.generateInitialFactSuggestions(fullTopicName),
+        fetchImageUrlForQuery(fullTopicName),
+      ]);
+      final suggestions = results[0] as List<String>;
+      final imageUrl = results[1] as String?;
 
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -71,14 +78,19 @@ class ChatProvider extends ChangeNotifier {
         timestamp: DateTime.now(),
         isUser: false,
         suggestedResponses: suggestions,
+        imageUrl: imageUrl,
       );
 
       await storageService.addMessageToChat(currentChat!.id, aiMessage);
       currentChat = await storageService.getChatById(currentChat!.id);
 
       chatHistory = await storageService.getAllChats();
-    } catch (e) {
-      errorMessage = 'Ошибка при создании чата: $e';
+    } catch (e, stackTrace) {
+      debugPrint('[ChatProvider.startNewChat] $e');
+      debugPrint(stackTrace.toString());
+      errorMessage = e is Exception
+          ? e.toString().replaceFirst('Exception: ', '')
+          : 'Ошибка при создании чата: $e';
     } finally {
       isLoading = false;
       notifyListeners();
@@ -88,30 +100,20 @@ class ChatProvider extends ChangeNotifier {
   Future<void> sendMessage(String userText, {AppLanguage? language}) async {
     if (currentChat == null) return;
 
+    _lastUserMessage = userText;
+    _lastLanguage = language;
     isLoading = true;
     errorMessage = null;
     notifyListeners();
 
     try {
-      // Update language if provided
       if (language != null) {
         aiService.setLanguage(language);
       }
 
-      // Add user message
-      final userMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: userText,
-        timestamp: DateTime.now(),
-        isUser: true,
-      );
-
-      await storageService.addMessageToChat(currentChat!.id, userMessage);
-
       final isGerman = language == AppLanguage.german;
       final defaultTopic = isGerman ? 'Allgemeine Information' : 'Общая информация';
       
-      // Формируем полное название темы: основная тема + подтема (если есть)
       String fullTopicName;
       if (currentChat!.parentTopicName != null && selectedTopic != null) {
         final parentName = currentChat!.parentTopicName!;
@@ -121,31 +123,59 @@ class ChatProvider extends ChangeNotifier {
         fullTopicName = selectedTopic?.getName(isGerman) ?? defaultTopic;
       }
 
-      // Get AI response
+      // Kontext: letzte Nachrichten (User + AI), damit die Antwort zum gewählten Fakt passt
+      final messages = currentChat!.messages;
+      final contextLines = <String>[];
+      final start = messages.length > 6 ? messages.length - 6 : 0;
+      for (var i = start; i < messages.length; i++) {
+        final m = messages[i];
+        contextLines.add('${m.isUser ? "Nutzer" : "Assistent"}: ${m.text}');
+      }
+      final conversationContext = contextLines.isNotEmpty ? contextLines : null;
+
       final aiResponse = await aiService.generateAIResponse(
         fullTopicName,
         userText,
+        conversationContext: conversationContext,
       );
 
-      // Get suggested responses for next turn
-      final suggestions = await aiService.generateSuggestedResponses(
-        fullTopicName,
-      );
+      final suggestionExcerpt = aiResponse.length > 500
+          ? '${aiResponse.substring(0, 500)}...'
+          : aiResponse;
+      final results = await Future.wait([
+        aiService.generateFollowUpFactSuggestions(
+          fullTopicName,
+          userText,
+          suggestionExcerpt,
+        ),
+        fetchImageUrlForQuery(userText),
+      ]);
+      final suggestions = results[0] as List<String>;
+      final imageUrl = results[1] as String?;
 
+      final userMessage = ChatMessage(
+        id: const Uuid().v4(),
+        text: userText,
+        timestamp: DateTime.now(),
+        isUser: true,
+      );
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
         text: aiResponse,
         timestamp: DateTime.now(),
         isUser: false,
         suggestedResponses: suggestions,
+        imageUrl: imageUrl,
       );
-
+      await storageService.addMessageToChat(currentChat!.id, userMessage);
       await storageService.addMessageToChat(currentChat!.id, aiMessage);
       currentChat = await storageService.getChatById(currentChat!.id);
 
       chatHistory = await storageService.getAllChats();
-    } catch (e) {
-      errorMessage = 'Ошибка при отправке сообщения: $e';
+    } catch (e, stackTrace) {
+      debugPrint('[ChatProvider.sendMessage] $e');
+      debugPrint(stackTrace.toString());
+      errorMessage = e is Exception ? e.toString().replaceFirst('Exception: ', '') : e.toString();
     } finally {
       isLoading = false;
       notifyListeners();
@@ -192,5 +222,15 @@ class ChatProvider extends ChangeNotifier {
     selectedTopic = null;
     currentChat = null;
     notifyListeners();
+  }
+
+  /// Повторить последний запрос (например после ошибки квоты).
+  bool get canRetry => _lastUserMessage != null && _lastUserMessage!.isNotEmpty;
+
+  Future<void> retryLastMessage({AppLanguage? language}) async {
+    final text = _lastUserMessage;
+    if (text == null || text.isEmpty || currentChat == null) return;
+    errorMessage = null;
+    await sendMessage(text, language: language ?? _lastLanguage);
   }
 }

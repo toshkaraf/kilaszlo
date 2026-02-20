@@ -25,7 +25,8 @@ class ChatHistoryPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: Consumer2<ChatProvider, LanguageProvider>(
+      body: SafeArea(
+        child: Consumer2<ChatProvider, LanguageProvider>(
         builder: (context, chatProvider, languageProvider, _) {
           final chats = chatProvider.chatHistory;
           final l10n = AppLocalizations(languageProvider.currentLanguage);
@@ -80,6 +81,7 @@ class ChatHistoryPage extends StatelessWidget {
             },
           );
         },
+        ),
       ),
     );
   }

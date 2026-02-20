@@ -44,9 +44,11 @@ dependencies:
   # JSON serialization
   json_annotation: ^4.8.1
   
-  # Text to speech
-  # Используем совместимую версию, рекомендуемую pub:
+  # Text to speech (запасной вариант, если Gemini TTS недоступен)
   flutter_tts: ^4.2.5
+  # Воспроизведение аудио (голос Gemini TTS)
+  audioplayers: ^6.0.0
+  path_provider: ^2.1.2
   
   # State management
   provider: ^6.1.0
@@ -84,6 +86,7 @@ flutter:
   # Environment variables file
   assets:
     - .env
+    - assets/thinking_woman_de.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

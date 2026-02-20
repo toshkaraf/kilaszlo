@@ -5,7 +5,6 @@ import '../providers/language_provider.dart';
 import '../l10n/app_localizations.dart';
 import 'theme_selector_page.dart';
 import 'chat_page.dart';
-import 'chat_history_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -14,7 +13,8 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      body: Consumer2<ChatProvider, LanguageProvider>(
+      body: SafeArea(
+        child: Consumer2<ChatProvider, LanguageProvider>(
         builder: (context, chatProvider, languageProvider, _) {
           final l10n = AppLocalizations(languageProvider.currentLanguage);
           
@@ -133,6 +133,7 @@ class HomePage extends StatelessWidget {
             ),
           );
         },
+      ),
       ),
     );
   }

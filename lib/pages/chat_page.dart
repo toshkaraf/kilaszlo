@@ -1,12 +1,18 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 import '../providers/chat_provider.dart';
+import '../services/gemini_tts_service.dart';
 import '../providers/language_provider.dart';
 import '../services/chat_storage_service.dart';
 import '../l10n/app_localizations.dart';
 import '../models/chat.dart';
 import '../models/theme_data.dart';
+import '../widgets/voice_waveform.dart';
 
 class ChatPage extends StatefulWidget {
   final Chat chat;
@@ -19,17 +25,41 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final FlutterTts _tts = FlutterTts();
+  final AudioPlayer _audioPlayer = AudioPlayer();
   late ScrollController _scrollController;
-  String? _currentlyPlayingMessageId;
+  final GlobalKey _suggestionsKey = GlobalKey();
   bool _isSpeaking = false;
-  bool _autoPlay = false;
-  String? _lastAIMessageId;
+  /// true только когда реально идёт воспроизведение (не во время ожидания TTS)
+  bool _isAudioPlaying = false;
+  bool _usingGeminiVoice = true;
   double _speechRate = 0.53;
+  int _lastMessageCount = 0;
+  String? _lastSpokenMessageId;
+
+  // Очередь автоозвучки: сначала текст ответа, потом подписи кнопок
+  List<String> _autoSpeakQueue = [];
+  bool _isAutoSpeakMode = false;
+  /// Фраза, которую сейчас читают из очереди (при паузе — дочитываем её при продолжении)
+  String? _currentSpeakPhrase;
+
+  // Состояние чтения текущего сообщения ИИ (для кнопки play/pause)
+  String? _currentMessageId;
+  List<String> _currentSentences = [];
+  int _currentSentenceIndex = 0;
+  bool _manuallyStopped = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
+    _audioPlayer.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      if (_manuallyStopped) return;
+      if (_isAutoSpeakMode) {
+        _currentSpeakPhrase = null;
+        _speakNextInQueue();
+      }
+    });
     _initTts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
@@ -46,15 +76,83 @@ class _ChatPageState extends State<ChatPage> {
     if (mounted) setState(() => _speechRate = rate);
 
     _tts.setStartHandler(() {
-      setState(() => _isSpeaking = true);
+      setState(() {
+        _isSpeaking = true;
+        _isAudioPlaying = true;
+        _manuallyStopped = false;
+      });
     });
 
     _tts.setCompletionHandler(() {
+      if (_manuallyStopped) return;
+      if (_isAutoSpeakMode) {
+        _currentSpeakPhrase = null;
+        _speakNextInQueue();
+        return;
+      }
+      if (_currentSentenceIndex < _currentSentences.length) {
+        _speakNextSentence();
+      } else {
+        setState(() {
+          _isSpeaking = false;
+          _currentMessageId = null;
+          _currentSentences = [];
+          _currentSentenceIndex = 0;
+        });
+      }
+    });
+  }
+
+  void _speakNextInQueue() {
+    if (_autoSpeakQueue.isEmpty) {
       setState(() {
         _isSpeaking = false;
-        _currentlyPlayingMessageId = null;
+        _isAudioPlaying = false;
+        _isAutoSpeakMode = false;
+        _currentSpeakPhrase = null;
       });
-    });
+      return;
+    }
+    final next = _autoSpeakQueue.removeAt(0);
+    _currentSpeakPhrase = next;
+    if (_usingGeminiVoice) {
+      _playPhraseWithGeminiOrFallback(next);
+    } else {
+      _tts.speak(next);
+    }
+  }
+
+  Future<void> _playPhraseWithGeminiOrFallback(String phrase) async {
+    final wavBytes = await generateSpeechFromGemini(phrase);
+    if (!mounted) return;
+    if (wavBytes != null) {
+      try {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/gemini_tts_${DateTime.now().millisecondsSinceEpoch}.wav');
+        await file.writeAsBytes(wavBytes);
+        if (!mounted) return;
+        setState(() => _isAudioPlaying = true);
+        await _audioPlayer.play(DeviceFileSource(file.path));
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {
+        if (mounted) _tts.speak(phrase);
+      }
+    } else {
+      _tts.speak(phrase);
+    }
+  }
+
+  void _startAutoSpeak(String messageId, String text, List<String> buttons) {
+    if (messageId == _lastSpokenMessageId) return;
+    _lastSpokenMessageId = messageId;
+    _currentMessageId = messageId;
+    _manuallyStopped = false;
+    _currentSpeakPhrase = null;
+    // Весь ответ — один запрос к TTS, чтобы читать подряд без пауз и без переключения голоса
+    _autoSpeakQueue = [text];
+    _isAutoSpeakMode = true;
+    setState(() => _isSpeaking = true);
+    _speakNextInQueue();
   }
 
   Future<void> _showSpeechRateDialog(AppLocalizations l10n) async {
@@ -101,30 +199,71 @@ class _ChatPageState extends State<ChatPage> {
     await _tts.setLanguage(languageCode);
   }
 
-  Future<void> _speak(String text, String messageId) async {
-    if (_isSpeaking) {
-      await _tts.stop();
-      setState(() {
-        _isSpeaking = false;
-        _currentlyPlayingMessageId = null;
-      });
-    } else {
-      setState(() => _currentlyPlayingMessageId = messageId);
-      await _tts.speak(text);
-    }
+  void _prepareSentences(String text) {
+    _currentSentences = text
+        .split(RegExp(r'(?<=[.!?])\s+'))
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
+    _currentSentenceIndex = 0;
   }
 
-  Future<void> _repeatLastMessage() async {
-    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+  Future<void> _speakNextSentence() async {
+    if (_currentSentenceIndex >= _currentSentences.length) return;
+    final sentence = _currentSentences[_currentSentenceIndex];
+    _currentSentenceIndex++;
+    await _tts.speak(sentence);
+  }
+
+  Future<void> _playPauseLastAiMessage(ChatProvider chatProvider) async {
     final messages = chatProvider.currentChat?.messages ?? [];
-    if (messages.isNotEmpty) {
-      final lastAIMessage = messages.reversed.firstWhere(
-        (m) => !m.isUser,
-        orElse: () => messages.last,
-      );
-      if (!lastAIMessage.isUser) {
-        await _speak(lastAIMessage.text, lastAIMessage.id);
+    if (messages.isEmpty) return;
+    final lastAIMessage = messages.reversed.firstWhere(
+      (m) => !m.isUser,
+      orElse: () => messages.last,
+    );
+    if (lastAIMessage.isUser) return;
+
+    // Пауза: уже читаем это сообщение
+    if (_isSpeaking && _currentMessageId == lastAIMessage.id) {
+      _manuallyStopped = true;
+      await _tts.stop();
+      await _audioPlayer.stop();
+      setState(() {
+        _isSpeaking = false;
+        _isAudioPlaying = false;
+      });
+      return;
+    }
+
+    // Продолжение после паузы: если были в режиме очереди (текст + кнопки)
+    final canResumeQueue = _currentMessageId == lastAIMessage.id &&
+        _isAutoSpeakMode &&
+        (_currentSpeakPhrase != null || _autoSpeakQueue.isNotEmpty);
+    if (!_isSpeaking && canResumeQueue) {
+      setState(() {
+        _isSpeaking = true;
+        _manuallyStopped = false;
+      });
+      if (_currentSpeakPhrase != null) {
+        final phrase = _currentSpeakPhrase!;
+        if (_usingGeminiVoice) {
+          _playPhraseWithGeminiOrFallback(phrase);
+        } else {
+          _tts.speak(phrase);
+        }
+      } else {
+        _speakNextInQueue();
       }
+      return;
+    }
+
+    // Новое сообщение или обычный режим по предложениям
+    if (_currentMessageId != lastAIMessage.id) {
+      _currentMessageId = lastAIMessage.id;
+      _prepareSentences(lastAIMessage.text);
+    }
+    if (_currentSentenceIndex < _currentSentences.length) {
+      await _speakNextSentence();
     }
   }
 
@@ -138,24 +277,220 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _checkAndAutoPlay(ChatProvider chatProvider) {
-    if (_autoPlay && !chatProvider.isLoading) {
-      final messages = chatProvider.currentChat?.messages ?? [];
-      if (messages.isNotEmpty) {
-        final lastMessage = messages.last;
-        if (!lastMessage.isUser && lastMessage.id != _lastAIMessageId) {
-          _lastAIMessageId = lastMessage.id;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _speak(lastMessage.text, lastMessage.id);
-          });
-        }
-      }
+  Widget _buildChatBody(
+    BuildContext context,
+    List<ChatMessage> messages,
+    ChatProvider chatProvider,
+    LanguageProvider languageProvider,
+    AppLocalizations l10n,
+  ) {
+    if (chatProvider.errorMessage != null) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red),
+                  ),
+                  child: Text(
+                    chatProvider.errorMessage!,
+                    style: const TextStyle(color: Colors.red, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+            if (chatProvider.canRetry)
+              Material(
+                elevation: 3,
+                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xFF3498DB),
+                child: InkWell(
+                  onTap: () async {
+                    await chatProvider.retryLastMessage(
+                      language: languageProvider.currentLanguage,
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: Center(
+                      child: Text(
+                        l10n.retry,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
     }
+
+    if (chatProvider.isLoading) {
+      return _buildWaitingScreen(context);
+    }
+
+    if (messages.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final lastMsg = messages.last;
+    final isLastAI = !lastMsg.isUser;
+    final suggestions = lastMsg.suggestedResponses ?? [];
+
+    // Ждём ответ или генерацию голоса — показываем заставку
+    if (isLastAI && _isSpeaking && !_isAudioPlaying) {
+      return _buildWaitingScreen(context);
+    }
+
+    // Реально играет голос — картинка по теме + визуализация
+    if (isLastAI && _isAudioPlaying) {
+      return Column(
+        children: [
+          Expanded(
+            child: _buildFullScreenImage(lastMsg.imageUrl),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            color: const Color(0xFF3498DB),
+            child: const VoiceWaveform(isSpeaking: true),
+          ),
+        ],
+      );
+    }
+
+    if (isLastAI && suggestions.isNotEmpty) {
+      // Чтение закончено — показываем только кнопки выбора
+      return SingleChildScrollView(
+        child: _buildSuggestedResponses(
+          context,
+          lastMsg,
+          chatProvider,
+          l10n,
+          languageProvider,
+          _suggestionsKey,
+        ),
+      );
+    }
+
+    return const Center(child: CircularProgressIndicator());
+  }
+
+  Widget _buildWaitingScreen(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFECF0F1),
+      child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Center(
+                  child: Image.asset(
+                    'assets/thinking_woman_de.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.psychology_outlined,
+                      size: 120,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                ),
+              ),
+              const Text(
+                'Einen Moment! Ich denke über die Antwort nach.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF2C3E50),
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 24),
+              const CircularProgressIndicator(
+                color: Color(0xFF3498DB),
+              ),
+              const SizedBox(height: 32),
+            ],
+          ),
+        ),
+    );
+  }
+
+  Widget _buildFullScreenImage(String? imageUrl) {
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return Container(
+        width: double.infinity,
+        color: Colors.black87,
+        child: Image.network(
+          imageUrl,
+          fit: BoxFit.contain,
+          headers: const {
+            'User-Agent': 'Kilaszlo/1.0',
+            'Referer': 'https://unsplash.com/',
+          },
+          errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '...',
+                    style: TextStyle(color: Colors.white70, fontSize: 18),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    }
+    return _buildImagePlaceholder();
+  }
+
+  Widget _buildImagePlaceholder() {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF2C3E50),
+      child: Center(
+        child: Icon(
+          Icons.image_outlined,
+          size: 80,
+          color: Colors.white.withOpacity(0.5),
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
     _tts.stop();
+    _audioPlayer.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -171,12 +506,22 @@ class _ChatPageState extends State<ChatPage> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _updateTtsLanguage();
         });
-        
-        // Update AI service language
+
+        // При появлении нового ответа ИИ запускаем озвучку (текст не показываем — только картинка + волна)
+        if (messages.isNotEmpty && !messages.last.isUser) {
+          final lastMsg = messages.last;
+          final suggestions = lastMsg.suggestedResponses ?? [];
+          if (messages.length != _lastMessageCount) {
+            _lastMessageCount = messages.length;
+            if (suggestions.isNotEmpty) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _startAutoSpeak(lastMsg.id, lastMsg.text, suggestions);
+              });
+            }
+          }
+        }
+
         chatProvider.updateLanguage(languageProvider.currentLanguage);
-        
-        // Check for auto-play
-        _checkAndAutoPlay(chatProvider);
 
         return WillPopScope(
           onWillPop: () async {
@@ -224,177 +569,37 @@ class _ChatPageState extends State<ChatPage> {
                 ),
                 IconButton(
                   icon: Icon(
-                    _autoPlay ? Icons.volume_up : Icons.volume_off,
-                    color: _autoPlay ? Colors.white : Colors.white70,
+                    _isSpeaking ? Icons.pause_circle_filled : Icons.play_circle_fill,
+                    color: Colors.white,
                   ),
                   tooltip: l10n.autoPlay,
-                  onPressed: () {
-                    setState(() {
-                      _autoPlay = !_autoPlay;
-                    });
-                  },
+                  onPressed: () => _playPauseLastAiMessage(chatProvider),
                 ),
                 IconButton(
                   icon: const Icon(Icons.repeat),
                   tooltip: l10n.repeatLast,
-                  onPressed: _repeatLastMessage,
+                  onPressed: () async {
+                    // Повторить последнее сообщение заново
+                    _currentMessageId = null;
+                    _currentSentences = [];
+                    _currentSentenceIndex = 0;
+                    await _playPauseLastAiMessage(chatProvider);
+                  },
                 ),
               ],
             ),
-            body: SingleChildScrollView(
-              controller: _scrollController,
-              child: Column(
-                children: [
-                  // Messages list
-                  messages.isEmpty
-                      ? const SizedBox(
-                          height: 400,
-                          child: Center(
-                            child: CircularProgressIndicator(),
-                          ),
-                        )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(16),
-                          itemCount: messages.length,
-                          itemBuilder: (context, index) {
-                            final message = messages[index];
-                            return _buildMessageBubble(
-                              context,
-                              message,
-                              chatProvider,
-                              l10n,
-                            );
-                          },
-                        ),
-
-                  // Suggested responses or input
-                  if (messages.isNotEmpty && !messages.last.isUser)
-                    _buildSuggestedResponses(context, messages.last, chatProvider, l10n, languageProvider),
-
-                  // Loading indicator
-                  if (chatProvider.isLoading)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: const CircularProgressIndicator(),
-                    ),
-
-                  // Error message
-                  if (chatProvider.errorMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red),
-                        ),
-                        child: Text(
-                          chatProvider.errorMessage!,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ),
-                    ),
-                ],
+            body: SafeArea(
+              child: _buildChatBody(
+                context,
+                messages,
+                chatProvider,
+                languageProvider,
+                l10n,
               ),
             ),
           ),
         );
       },
-    );
-  }
-
-  Widget _buildMessageBubble(
-    BuildContext context,
-    ChatMessage message,
-    ChatProvider chatProvider,
-    AppLocalizations l10n,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        mainAxisAlignment:
-            message.isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        children: [
-          Flexible(
-            child: Column(
-              crossAxisAlignment: message.isUser
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: message.isUser
-                        ? const Color(0xFF3498DB)
-                        : const Color(0xFFECF0F1),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    message.text,
-                    style: TextStyle(
-                      fontSize: 20,
-                      color: message.isUser ? Colors.white : Colors.black87,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-                if (!message.isUser)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: SizedBox(
-                      height: 50,
-                      child: Material(
-                        elevation: 2,
-                        borderRadius: BorderRadius.circular(25),
-                        color: _currentlyPlayingMessageId == message.id
-                            ? Colors.red
-                            : const Color(0xFF27AE60),
-                        child: InkWell(
-                          onTap: () => _speak(message.text, message.id),
-                          borderRadius: BorderRadius.circular(25),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _currentlyPlayingMessageId == message.id
-                                      ? Icons.stop
-                                      : Icons.volume_up,
-                                  color: Colors.white,
-                                  size: 24,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _currentlyPlayingMessageId == message.id
-                                      ? l10n.stop
-                                      : l10n.speak,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -404,44 +609,17 @@ class _ChatPageState extends State<ChatPage> {
     ChatProvider chatProvider,
     AppLocalizations l10n,
     LanguageProvider languageProvider,
+    GlobalKey suggestionsKey,
   ) {
     final suggestions = lastMessage.suggestedResponses ?? [];
 
+    // Кнопки только для вариантов выбора темы; без вариантов — ничего не показываем
     if (suggestions.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: SizedBox(
-          width: double.infinity,
-          height: 60,
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(12),
-            color: const Color(0xFF3498DB),
-            child: InkWell(
-              onTap: () async {
-                final continueText = l10n.isGerman 
-                    ? 'Setze das Gespräch fort' 
-                    : 'Продолжи разговор';
-                await chatProvider.sendMessage(continueText, language: languageProvider.currentLanguage);
-              },
-              borderRadius: BorderRadius.circular(12),
-              child: Center(
-                child: Text(
-                  l10n.continueChat,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
+      return const SizedBox.shrink();
     }
 
     return Padding(
+      key: suggestionsKey,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -455,7 +633,6 @@ class _ChatPageState extends State<ChatPage> {
                     child: InkWell(
                       onTap: () async {
                         await chatProvider.sendMessage(suggestion, language: languageProvider.currentLanguage);
-                        _scrollToBottom();
                       },
                       borderRadius: BorderRadius.circular(12),
                       child: Padding(
