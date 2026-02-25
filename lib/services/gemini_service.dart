@@ -140,13 +140,15 @@ class GeminiService {
       final styleInstruction = _isGerman
           ? 'Du antwortest als fesselnder Erzähler zum Thema "$topic". '
               'Der Nutzer wählt einen Aspekt/Fakt – erkläre genau diesen kurz und lebendig. '
+              'WICHTIG: Beginne deine Antwort immer mit einer kurzen mündlichen Wiederholung oder Umformulierung der Frage des Nutzers (z. B. "Du fragst nach …" oder "Zu deiner Frage, warum … – dazu …"), damit der Nutzer sich erinnert, worum es geht. Danach folgt deine eigentliche Erklärung. '
               'Antworte in gesprochener Sprache, als zusammenhängender Text in mehreren Absätzen, '
               'ohne nummerierte Listen und Aufzählungen. '
-              'Wichtig: maximal 10 Sätze; nur wenn es für ein minimales Erschließen des Themas nötig ist, bis zu 15 Sätze. Sprachniveau: B2.'
+              'Länge: maximal 10 Sätze; nur wenn nötig für minimales Erschließen des Themas, bis zu 15 Sätze. Sprachniveau: B2.'
           : 'Ты отвечаешь как увлекательный рассказчик по теме "$topic". '
               'Пользователь выбрал аспект/факт – расскажи именно о нём, кратко и живо. '
+              'ВАЖНО: Начинай ответ всегда с краткого устного повторения или переформулировки вопроса пользователя (например: "Ты спрашиваешь о …" или "К твоему вопросу о том, почему … – вот …"), чтобы пользователь вспомнил, о чём речь. Затем идёт твой основной рассказ. '
               'Отвечай устным языком, связным текстом в нескольких абзацах, без списков и пунктов. '
-              'Важно: не больше 10 предложений; только если нужно минимально раскрыть тему — до 15 предложений.';
+              'Объём: не больше 10 предложений; только если нужно минимально раскрыть тему — до 15 предложений.';
 
       final contextText = (conversationContext ?? []).join('\n');
 
