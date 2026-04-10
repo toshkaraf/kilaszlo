@@ -52,6 +52,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _manuallyStopped = false;
   bool _isWaitingVisualActive = false;
   bool _isWaitingMode = false;
+  bool _isAnswerPlaybackPending = false;
   bool _showWaitingVideo = false;
   bool _isVideoReady = false;
   String? _videoInitError;
@@ -211,6 +212,7 @@ class _ChatPageState extends State<ChatPage> {
         _isSpeaking = false;
         _isAudioPlaying = false;
         _isAutoSpeakMode = false;
+        _isAnswerPlaybackPending = false;
         _currentSpeakPhrase = null;
       });
       return;
@@ -269,7 +271,10 @@ class _ChatPageState extends State<ChatPage> {
       if (followUpPrompt.isNotEmpty) followUpPrompt,
     ];
     _isAutoSpeakMode = true;
-    setState(() => _isSpeaking = true);
+    setState(() {
+      _isSpeaking = true;
+      _isAnswerPlaybackPending = false;
+    });
     _speakNextInQueue();
   }
 
@@ -467,7 +472,9 @@ class _ChatPageState extends State<ChatPage> {
       final hasUserMessages = messages.any((m) => m.isUser);
       final shouldShowWaiting =
           hasUserMessages &&
-          (chatProvider.isLoading || (isLastAI && _isSpeaking && !_isAudioPlaying));
+          (chatProvider.isLoading ||
+              _isAnswerPlaybackPending ||
+              (isLastAI && _isSpeaking && !_isAudioPlaying));
       // Video + Voice-Player nur für echte Antwortphase nach User-Auswahl,
       // nicht für die initiale Intro-Stimme über den grünen Buttons.
       final shouldShowAnswerVideo = hasUserMessages && isLastAI && _isAudioPlaying;
@@ -674,9 +681,18 @@ class _ChatPageState extends State<ChatPage> {
         if (messages.isNotEmpty && !messages.last.isUser) {
           final lastMsg = messages.last;
           final suggestions = lastMsg.suggestedResponses ?? [];
+          final hasUserMessages = messages.any((m) => m.isUser);
           if (messages.length != _lastMessageCount) {
             _lastMessageCount = messages.length;
             if (suggestions.isNotEmpty) {
+              if (hasUserMessages) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _isAnswerPlaybackPending = true;
+                  });
+                });
+              }
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 Future.delayed(const Duration(seconds: 1), () {
                   if (!mounted) return;
