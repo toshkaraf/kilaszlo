@@ -1,10 +1,13 @@
 import 'dart:io';
+import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 import '../providers/chat_provider.dart';
 import '../services/gemini_tts_service.dart';
 import '../providers/language_provider.dart';
@@ -47,6 +50,13 @@ class _ChatPageState extends State<ChatPage> {
   List<String> _currentSentences = [];
   int _currentSentenceIndex = 0;
   bool _manuallyStopped = false;
+  bool _isWaitingVisualActive = false;
+  bool _isWaitingMode = false;
+  bool _showWaitingVideo = false;
+  bool _isVideoReady = false;
+  String? _videoInitError;
+  Timer? _waitingIntroTimer;
+  VideoPlayerController? _waitingVideoController;
 
   @override
   void initState() {
@@ -61,6 +71,7 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
     _initTts();
+    _preloadWaitingVideo();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
@@ -103,6 +114,97 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  Future<void> _preloadWaitingVideo() async {
+    try {
+      if (_waitingVideoController != null && _isVideoReady) return;
+      final controller = VideoPlayerController.asset('assets/waiting_bg.mp4');
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      await controller.setLooping(true);
+      setState(() {
+        _waitingVideoController = controller;
+        _isVideoReady = true;
+        _videoInitError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isVideoReady = false;
+        _videoInitError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _startVideoFromRandomPosition() async {
+    final controller = _waitingVideoController;
+    if (controller == null || !_isVideoReady) return;
+    try {
+      final totalSeconds = controller.value.duration.inSeconds;
+      final minStart = 10;
+      final maxStart = min(360, totalSeconds - 5);
+      if (maxStart > minStart) {
+        final start = minStart + Random().nextInt(maxStart - minStart + 1);
+        await controller.seekTo(Duration(seconds: start));
+      } else {
+        await controller.seekTo(Duration.zero);
+      }
+      await controller.play();
+    } catch (_) {
+      // Игнорируем ошибки старта, UI покажет fallback.
+    }
+  }
+
+  void _startWaitingVisualSequence() {
+    _waitingIntroTimer?.cancel();
+    _isWaitingVisualActive = true;
+    _isWaitingMode = true;
+    setState(() => _showWaitingVideo = false);
+    _preloadWaitingVideo().then((_) => _startVideoFromRandomPosition());
+    _waitingIntroTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted || !_isWaitingVisualActive) return;
+      setState(() => _showWaitingVideo = true);
+    });
+  }
+
+  Future<void> _stopWaitingVisualSequence() async {
+    _isWaitingVisualActive = false;
+    _isWaitingMode = false;
+    _waitingIntroTimer?.cancel();
+    _waitingIntroTimer = null;
+    _showWaitingVideo = false;
+    if (mounted) setState(() {});
+    await _waitingVideoController?.pause();
+  }
+
+  void _syncWaitingVisualState(bool shouldWait) {
+    if (shouldWait) {
+      if (_isWaitingVisualActive && _isWaitingMode) return;
+      _startWaitingVisualSequence();
+    } else {
+      // Пока идет озвучка ответа, видео не останавливаем.
+      if (_isAudioPlaying) return;
+      _stopWaitingVisualSequence();
+    }
+  }
+
+  void _syncAnswerVideoState(bool shouldShowAnswerVideo) {
+    if (!shouldShowAnswerVideo) return;
+    if (_isWaitingVisualActive && !_isWaitingMode) return;
+    _waitingIntroTimer?.cancel();
+    _waitingIntroTimer = null;
+    _isWaitingVisualActive = true;
+    _isWaitingMode = false;
+    setState(() => _showWaitingVideo = true);
+    if (_waitingVideoController == null || !_isVideoReady) {
+      _preloadWaitingVideo().then((_) => _startVideoFromRandomPosition());
+    } else {
+      _waitingVideoController?.play();
+    }
+  }
+
   void _speakNextInQueue() {
     if (_autoSpeakQueue.isEmpty) {
       setState(() {
@@ -142,14 +244,30 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _startAutoSpeak(String messageId, String text, List<String> buttons) {
+  String _buildFollowUpPrompt(AppLanguage language) {
+    if (language == AppLanguage.german) {
+      return 'Wenn du moechtest, waehle jetzt einen der naechsten Aspekte auf den gruenen Schaltflaechen.';
+    }
+    return 'Если хочешь, выбери сейчас один из следующих аспектов на зеленых кнопках.';
+  }
+
+  void _startAutoSpeak(
+    String messageId,
+    String text,
+    List<String> buttons, {
+    required AppLanguage language,
+  }) {
     if (messageId == _lastSpokenMessageId) return;
     _lastSpokenMessageId = messageId;
     _currentMessageId = messageId;
     _manuallyStopped = false;
     _currentSpeakPhrase = null;
-    // Весь ответ — один запрос к TTS, чтобы читать подряд без пауз и без переключения голоса
-    _autoSpeakQueue = [text];
+    // Сначала основной ответ, затем короткое приглашение выбрать следующий аспект.
+    final followUpPrompt = _buildFollowUpPrompt(language).trim();
+    _autoSpeakQueue = [
+      text,
+      if (followUpPrompt.isNotEmpty) followUpPrompt,
+    ];
     _isAutoSpeakMode = true;
     setState(() => _isSpeaking = true);
     _speakNextInQueue();
@@ -339,29 +457,147 @@ class _ChatPageState extends State<ChatPage> {
       );
     }
 
-    if (chatProvider.isLoading) {
-      return _buildWaitingScreen(context);
+    Widget content = const Center(child: CircularProgressIndicator());
+    String viewKey = 'loading';
+
+    if (messages.isNotEmpty) {
+      final lastMsg = messages.last;
+      final isLastAI = !lastMsg.isUser;
+      final suggestions = lastMsg.suggestedResponses ?? [];
+      final hasUserMessages = messages.any((m) => m.isUser);
+      final shouldShowWaiting =
+          hasUserMessages &&
+          (chatProvider.isLoading || (isLastAI && _isSpeaking && !_isAudioPlaying));
+      // Video + Voice-Player nur für echte Antwortphase nach User-Auswahl,
+      // nicht für die initiale Intro-Stimme über den grünen Buttons.
+      final shouldShowAnswerVideo = hasUserMessages && isLastAI && _isAudioPlaying;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncWaitingVisualState(shouldShowWaiting);
+        _syncAnswerVideoState(shouldShowAnswerVideo);
+      });
+
+      if (shouldShowWaiting) {
+        content = _buildWaitingScreen(context);
+        viewKey = 'waiting';
+      } else if (shouldShowAnswerVideo) {
+        content = _buildAnswerWithAudioView(lastMsg);
+        viewKey = 'answer-${lastMsg.id}';
+      } else if (isLastAI && suggestions.isNotEmpty) {
+        content = SingleChildScrollView(
+          child: _buildSuggestedResponses(
+            context,
+            lastMsg,
+            chatProvider,
+            l10n,
+            languageProvider,
+            _suggestionsKey,
+          ),
+        );
+        viewKey = 'suggestions-${lastMsg.id}';
+      }
     }
 
-    if (messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 800),
+      switchInCurve: Curves.easeInOut,
+      switchOutCurve: Curves.easeInOut,
+      child: KeyedSubtree(
+        key: ValueKey(viewKey),
+        child: content,
+      ),
+    );
+  }
 
-    final lastMsg = messages.last;
-    final isLastAI = !lastMsg.isUser;
-    final suggestions = lastMsg.suggestedResponses ?? [];
+  Widget _buildWaitingScreen(BuildContext context) {
+    final isVideoReady = _isVideoReady &&
+        _waitingVideoController != null &&
+        _waitingVideoController!.value.isInitialized;
+    final showVideoLayer = _showWaitingVideo && isVideoReady;
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFECF0F1),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (isVideoReady)
+            AnimatedOpacity(
+              opacity: showVideoLayer ? 1 : 0,
+              duration: const Duration(seconds: 3),
+              curve: Curves.easeInOut,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _waitingVideoController!.value.size.width,
+                  height: _waitingVideoController!.value.size.height,
+                  child: VideoPlayer(_waitingVideoController!),
+                ),
+              ),
+            ),
+          AnimatedOpacity(
+            opacity: showVideoLayer ? 0 : 1,
+            duration: const Duration(seconds: 3),
+            curve: Curves.easeInOut,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Center(
+                      child: Image.asset(
+                        'assets/thinking_woman_de.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => Icon(
+                          Icons.psychology_outlined,
+                          size: 120,
+                          color: Colors.grey.shade400,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Text(
+                    'Einen Moment! Ich denke über die Antwort nach.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF2C3E50),
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  if (_videoInitError == null)
+                    const CircularProgressIndicator(
+                      color: Color(0xFF3498DB),
+                    )
+                  else
+                    Text(
+                      'Не удалось загрузить видео: $_videoInitError',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF7F8C8D)),
+                    ),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    // Ждём ответ или генерацию голоса — показываем заставку
-    if (isLastAI && _isSpeaking && !_isAudioPlaying) {
-      return _buildWaitingScreen(context);
-    }
-
-    // Реально играет голос — картинка по теме + визуализация
-    if (isLastAI && _isAudioPlaying) {
-      return Column(
+  Widget _buildAnswerWithAudioView(ChatMessage message) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 700),
+      switchInCurve: Curves.easeInOut,
+      switchOutCurve: Curves.easeInOut,
+      child: Column(
+        key: ValueKey('answer-${message.id}'),
         children: [
           Expanded(
-            child: _buildFullScreenImage(lastMsg.imageUrl),
+            child: _buildVideoBackground(),
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 24),
@@ -369,119 +605,44 @@ class _ChatPageState extends State<ChatPage> {
             child: const VoiceWaveform(isSpeaking: true),
           ),
         ],
-      );
-    }
-
-    if (isLastAI && suggestions.isNotEmpty) {
-      // Чтение закончено — показываем только кнопки выбора
-      return SingleChildScrollView(
-        child: _buildSuggestedResponses(
-          context,
-          lastMsg,
-          chatProvider,
-          l10n,
-          languageProvider,
-          _suggestionsKey,
-        ),
-      );
-    }
-
-    return const Center(child: CircularProgressIndicator());
-  }
-
-  Widget _buildWaitingScreen(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFFECF0F1),
-      child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Expanded(
-                flex: 3,
-                child: Center(
-                  child: Image.asset(
-                    'assets/thinking_woman_de.png',
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Icon(
-                      Icons.psychology_outlined,
-                      size: 120,
-                      color: Colors.grey.shade400,
-                    ),
-                  ),
-                ),
-              ),
-              const Text(
-                'Einen Moment! Ich denke über die Antwort nach.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF2C3E50),
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 24),
-              const CircularProgressIndicator(
-                color: Color(0xFF3498DB),
-              ),
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
+      ),
     );
   }
 
-  Widget _buildFullScreenImage(String? imageUrl) {
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+  Widget _buildVideoBackground() {
+    final controller = _waitingVideoController;
+    if (controller != null && controller.value.isInitialized) {
       return Container(
         width: double.infinity,
-        color: Colors.black87,
-        child: Image.network(
-          imageUrl,
-          fit: BoxFit.contain,
-          headers: const {
-            'User-Agent': 'Kilaszlo/1.0',
-            'Referer': 'https://unsplash.com/',
-          },
-          errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                        : null,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    '...',
-                    style: TextStyle(color: Colors.white70, fontSize: 18),
-                  ),
-                ],
-              ),
-            );
-          },
+        color: Colors.black,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: controller.value.size.width,
+            height: controller.value.size.height,
+            child: VideoPlayer(controller),
+          ),
         ),
       );
     }
-    return _buildImagePlaceholder();
+    return _buildVideoPlaceholder();
   }
 
-  Widget _buildImagePlaceholder() {
+  Widget _buildVideoPlaceholder() {
     return Container(
       width: double.infinity,
-      color: const Color(0xFF2C3E50),
+      color: Colors.black,
       child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 80,
-          color: Colors.white.withOpacity(0.5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: Colors.white70),
+            const SizedBox(height: 12),
+            Text(
+              'Загрузка видео...',
+              style: TextStyle(color: Colors.white.withOpacity(0.85)),
+            ),
+          ],
         ),
       ),
     );
@@ -489,6 +650,8 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _waitingIntroTimer?.cancel();
+    _waitingVideoController?.dispose();
     _tts.stop();
     _audioPlayer.dispose();
     _scrollController.dispose();
@@ -515,7 +678,20 @@ class _ChatPageState extends State<ChatPage> {
             _lastMessageCount = messages.length;
             if (suggestions.isNotEmpty) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _startAutoSpeak(lastMsg.id, lastMsg.text, suggestions);
+                Future.delayed(const Duration(seconds: 1), () {
+                  if (!mounted) return;
+                  final current = chatProvider.currentChat?.messages;
+                  if (current == null || current.isEmpty) return;
+                  final latest = current.last;
+                  if (!latest.isUser && latest.id == lastMsg.id) {
+                    _startAutoSpeak(
+                      lastMsg.id,
+                      lastMsg.text,
+                      suggestions,
+                      language: languageProvider.currentLanguage,
+                    );
+                  }
+                });
               });
             }
           }
@@ -526,7 +702,9 @@ class _ChatPageState extends State<ChatPage> {
         return WillPopScope(
           onWillPop: () async {
             chatProvider.clearSelection();
-            return true;
+            // ChatPage is rendered inside HomePage body (not as a pushed route).
+            // Prevent popping the app route to desktop on system back.
+            return false;
           },
           child: Scaffold(
             appBar: AppBar(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'services/chat_storage_service.dart';
 import 'providers/chat_provider.dart';
 import 'providers/language_provider.dart';
@@ -15,6 +16,9 @@ void main() async {
   // Initialize storage service
   final storageService = ChatStorageService();
   await storageService.init();
+
+  // Keep the screen awake while app is running.
+  await WakelockPlus.enable();
 
   runApp(
     MultiProvider(

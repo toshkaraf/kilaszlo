@@ -4,7 +4,6 @@ import '../models/theme_data.dart';
 import '../models/chat.dart';
 import '../services/chat_storage_service.dart';
 import '../services/gemini_service.dart';
-import '../services/unsplash_image_service.dart';
 import 'language_provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -62,15 +61,10 @@ class ChatProvider extends ChangeNotifier {
         aiService.setLanguage(language);
       }
 
-      // Intro, 5 Fakten und optional ein Bild zur Thema parallel
+      // Intro + 5 фактов для кнопок
       final initialMessage =
           await aiService.generateInitialMessage(fullTopicName);
-      final results = await Future.wait([
-        aiService.generateInitialFactSuggestions(fullTopicName),
-        fetchImageUrlForQuery(fullTopicName),
-      ]);
-      final suggestions = results[0] as List<String>;
-      final imageUrl = results[1] as String?;
+      final suggestions = await aiService.generateInitialFactSuggestions(fullTopicName);
 
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -78,7 +72,6 @@ class ChatProvider extends ChangeNotifier {
         timestamp: DateTime.now(),
         isUser: false,
         suggestedResponses: suggestions,
-        imageUrl: imageUrl,
       );
 
       await storageService.addMessageToChat(currentChat!.id, aiMessage);
@@ -142,16 +135,11 @@ class ChatProvider extends ChangeNotifier {
       final suggestionExcerpt = aiResponse.length > 500
           ? '${aiResponse.substring(0, 500)}...'
           : aiResponse;
-      final results = await Future.wait([
-        aiService.generateFollowUpFactSuggestions(
-          fullTopicName,
-          userText,
-          suggestionExcerpt,
-        ),
-        fetchImageUrlForQuery(userText),
-      ]);
-      final suggestions = results[0] as List<String>;
-      final imageUrl = results[1] as String?;
+      final suggestions = await aiService.generateFollowUpFactSuggestions(
+        fullTopicName,
+        userText,
+        suggestionExcerpt,
+      );
 
       final userMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -165,7 +153,6 @@ class ChatProvider extends ChangeNotifier {
         timestamp: DateTime.now(),
         isUser: false,
         suggestedResponses: suggestions,
-        imageUrl: imageUrl,
       );
       await storageService.addMessageToChat(currentChat!.id, userMessage);
       await storageService.addMessageToChat(currentChat!.id, aiMessage);
