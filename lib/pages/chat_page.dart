@@ -55,6 +55,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _isAnswerPlaybackPending = false;
   bool _showWaitingVideo = false;
   bool _isVideoReady = false;
+  bool _isVideoInitializing = false;
   String? _videoInitError;
   Timer? _waitingIntroTimer;
   VideoPlayerController? _waitingVideoController;
@@ -72,7 +73,6 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
     _initTts();
-    _preloadWaitingVideo();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
@@ -116,8 +116,12 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _preloadWaitingVideo() async {
+    if (_isVideoInitializing) return;
     try {
       if (_waitingVideoController != null && _isVideoReady) return;
+      _isVideoInitializing = true;
+
+      final previousController = _waitingVideoController;
       final controller = VideoPlayerController.asset('assets/waiting_bg.mp4');
       await controller.initialize();
       if (!mounted) {
@@ -126,6 +130,9 @@ class _ChatPageState extends State<ChatPage> {
       }
       await controller.setLooping(true);
       setState(() {
+        if (previousController != null && previousController != controller) {
+          previousController.dispose();
+        }
         _waitingVideoController = controller;
         _isVideoReady = true;
         _videoInitError = null;
@@ -136,6 +143,8 @@ class _ChatPageState extends State<ChatPage> {
         _isVideoReady = false;
         _videoInitError = e.toString();
       });
+    } finally {
+      _isVideoInitializing = false;
     }
   }
 
