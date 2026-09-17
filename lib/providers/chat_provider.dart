@@ -28,6 +28,15 @@ class ChatProvider extends ChangeNotifier {
   String? _lastUserMessage;
   AppLanguage? _lastLanguage;
 
+  /// Счётчик поколений запросов. Увеличивается при каждом новом
+  /// startNewChat/sendMessage и при выходе из чата (exitChat/clearSelection).
+  /// Если пользователь ушёл назад или запустил новый запрос, пока старый
+  /// ещё выполнялся (сеть отвечает не мгновенно), старый запрос по
+  /// завершении сверяет своё поколение с текущим и, если оно устарело,
+  /// просто ничего не делает — не трогает currentChat/isLoading/errorMessage
+  /// и не может «перезаписать» состояние более свежего запроса.
+  int _requestGeneration = 0;
+
   ChatProvider({required this.storageService}) {
     // Устанавливаем немецкий язык по умолчанию для AI сервиса
     aiService.setLanguage(AppLanguage.german);
@@ -45,6 +54,7 @@ class ChatProvider extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final myGeneration = ++_requestGeneration;
     isLoading = true;
     errorMessage = null;
     notifyListeners();
@@ -54,14 +64,18 @@ class ChatProvider extends ChangeNotifier {
       final isGerman = language == AppLanguage.german;
       final parentName = parentTopic?.getName(isGerman);
       final topicName = topic.getName(isGerman);
-      final fullTopicName = parentName != null 
+      final fullTopicName = parentName != null
           ? '$parentName - $topicName'
           : topicName;
-      currentChat = await storageService.createNewChat(
-        topic.id, 
+      final newChat = await storageService.createNewChat(
+        topic.id,
         topicName,
         parentTopicName: parentName,
       );
+      // Пользователь мог уйти назад/начать другой чат, пока чат создавался —
+      // тогда этот запрос устарел и не должен трогать общее состояние.
+      if (myGeneration != _requestGeneration) return;
+      currentChat = newChat;
 
       // Update language if provided
       if (language != null) {
@@ -71,6 +85,8 @@ class ChatProvider extends ChangeNotifier {
       // Intro + 5 фактов для кнопок
       final initialMessage =
           await aiService.generateInitialMessage(fullTopicName);
+      if (myGeneration != _requestGeneration) return;
+
       List<String> suggestions = const [];
       try {
         suggestions = await aiService.generateInitialFactSuggestions(fullTopicName);
@@ -78,6 +94,7 @@ class ChatProvider extends ChangeNotifier {
         debugPrint('[ChatProvider.startNewChat.suggestions] $e');
         debugPrint(stackTrace.toString());
       }
+      if (myGeneration != _requestGeneration) return;
 
       final aiMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -87,11 +104,18 @@ class ChatProvider extends ChangeNotifier {
         suggestedResponses: suggestions,
       );
 
-      await storageService.addMessageToChat(currentChat!.id, aiMessage);
-      currentChat = await storageService.getChatById(currentChat!.id);
+      await storageService.addMessageToChat(newChat.id, aiMessage);
+      if (myGeneration != _requestGeneration) return;
 
-      chatHistory = await storageService.getAllChats();
+      final updatedChat = await storageService.getChatById(newChat.id);
+      if (myGeneration != _requestGeneration) return;
+      currentChat = updatedChat;
+
+      final updatedHistory = await storageService.getAllChats();
+      if (myGeneration != _requestGeneration) return;
+      chatHistory = updatedHistory;
     } catch (e, stackTrace) {
+      if (myGeneration != _requestGeneration) return;
       debugPrint('[ChatProvider.startNewChat] $e');
       debugPrint(stackTrace.toString());
       if (_isRateLimitError(e.toString())) {
@@ -103,8 +127,10 @@ class ChatProvider extends ChangeNotifier {
             : 'Ошибка при создании чата: $e';
       }
     } finally {
-      isLoading = false;
-      notifyListeners();
+      if (myGeneration == _requestGeneration) {
+        isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -116,6 +142,14 @@ class ChatProvider extends ChangeNotifier {
       return;
     }
 
+    // Захватываем id и нужные поля чата сразу — currentChat может стать null
+    // (пользователь ушёл назад) в любой момент между await'ами ниже, а
+    // "currentChat!" после этого бросил бы исключение.
+    final chatId = currentChat!.id;
+    final parentTopicName = currentChat!.parentTopicName;
+    final contextMessages = currentChat!.messages;
+
+    final myGeneration = ++_requestGeneration;
     _lastUserMessage = userText;
     _lastLanguage = language;
     isLoading = true;
@@ -129,22 +163,20 @@ class ChatProvider extends ChangeNotifier {
 
       final isGerman = language == AppLanguage.german;
       final defaultTopic = isGerman ? 'Allgemeine Information' : 'Общая информация';
-      
+
       String fullTopicName;
-      if (currentChat!.parentTopicName != null && selectedTopic != null) {
-        final parentName = currentChat!.parentTopicName!;
+      if (parentTopicName != null && selectedTopic != null) {
         final subtopicName = selectedTopic!.getName(isGerman);
-        fullTopicName = '$parentName - $subtopicName';
+        fullTopicName = '$parentTopicName - $subtopicName';
       } else {
         fullTopicName = selectedTopic?.getName(isGerman) ?? defaultTopic;
       }
 
       // Kontext: letzte Nachrichten (User + AI), damit die Antwort zum gewählten Fakt passt
-      final messages = currentChat!.messages;
       final contextLines = <String>[];
-      final start = messages.length > 6 ? messages.length - 6 : 0;
-      for (var i = start; i < messages.length; i++) {
-        final m = messages[i];
+      final start = contextMessages.length > 6 ? contextMessages.length - 6 : 0;
+      for (var i = start; i < contextMessages.length; i++) {
+        final m = contextMessages[i];
         contextLines.add('${m.isUser ? "Nutzer" : "Assistent"}: ${m.text}');
       }
       final conversationContext = contextLines.isNotEmpty ? contextLines : null;
@@ -154,6 +186,7 @@ class ChatProvider extends ChangeNotifier {
         userText,
         conversationContext: conversationContext,
       );
+      if (myGeneration != _requestGeneration) return;
 
       final suggestionExcerpt = aiResponse.length > 500
           ? '${aiResponse.substring(0, 500)}...'
@@ -169,6 +202,7 @@ class ChatProvider extends ChangeNotifier {
         debugPrint('[ChatProvider.sendMessage.suggestions] $e');
         debugPrint(stackTrace.toString());
       }
+      if (myGeneration != _requestGeneration) return;
 
       final userMessage = ChatMessage(
         id: const Uuid().v4(),
@@ -183,12 +217,19 @@ class ChatProvider extends ChangeNotifier {
         isUser: false,
         suggestedResponses: suggestions,
       );
-      await storageService.addMessageToChat(currentChat!.id, userMessage);
-      await storageService.addMessageToChat(currentChat!.id, aiMessage);
-      currentChat = await storageService.getChatById(currentChat!.id);
+      await storageService.addMessageToChat(chatId, userMessage);
+      await storageService.addMessageToChat(chatId, aiMessage);
+      if (myGeneration != _requestGeneration) return;
 
-      chatHistory = await storageService.getAllChats();
+      final updatedChat = await storageService.getChatById(chatId);
+      if (myGeneration != _requestGeneration) return;
+      currentChat = updatedChat;
+
+      final updatedHistory = await storageService.getAllChats();
+      if (myGeneration != _requestGeneration) return;
+      chatHistory = updatedHistory;
     } catch (e, stackTrace) {
+      if (myGeneration != _requestGeneration) return;
       debugPrint('[ChatProvider.sendMessage] $e');
       debugPrint(stackTrace.toString());
       if (_isRateLimitError(e.toString())) {
@@ -198,8 +239,10 @@ class ChatProvider extends ChangeNotifier {
         errorMessage = e is Exception ? e.toString().replaceFirst('Exception: ', '') : e.toString();
       }
     } finally {
-      isLoading = false;
-      notifyListeners();
+      if (myGeneration == _requestGeneration) {
+        isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -214,6 +257,9 @@ class ChatProvider extends ChangeNotifier {
     await storageService.deleteChat(chatId);
     chatHistory = await storageService.getAllChats();
     if (currentChat?.id == chatId) {
+      // Удаляемый чат мог как раз генерировать ответ — сбрасываем поколение,
+      // чтобы завершение того запроса не "воскресило" currentChat.
+      _requestGeneration++;
       currentChat = null;
     }
     notifyListeners();
@@ -246,6 +292,11 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void clearSelection() {
+    // Сбрасываем поколение запросов: если startNewChat/sendMessage ещё
+    // выполняется для этого чата, его результат по завершении будет
+    // проигнорирован вместо того, чтобы перезаписать состояние поверх
+    // того, что пользователь видит после ухода назад.
+    _requestGeneration++;
     selectedCategory = null;
     selectedSubcategory = null;
     selectedTopic = null;
@@ -257,6 +308,7 @@ class ChatProvider extends ChangeNotifier {
   /// выбранную категорию/подкатегорию — чат открывается как отдельный
   /// экран поверх списка тем, поэтому «Назад» просто возвращает на него.
   void exitChat() {
+    _requestGeneration++;
     currentChat = null;
     notifyListeners();
   }

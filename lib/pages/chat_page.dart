@@ -52,10 +52,9 @@ class _ChatPageState extends State<ChatPage> {
   /// Фраза, которую сейчас читают из очереди (при паузе — дочитываем её при продолжении)
   String? _currentSpeakPhrase;
 
-  // Состояние чтения текущего сообщения ИИ (для кнопки play/pause)
+  // Состояние чтения текущего сообщения ИИ (для кнопки play/pause) —
+  // id сообщения, чья очередь фраз сейчас активна/на паузе.
   String? _currentMessageId;
-  List<String> _currentSentences = [];
-  int _currentSentenceIndex = 0;
   bool _manuallyStopped = false;
   bool _isWaitingVisualActive = false;
   bool _isWaitingMode = false;
@@ -116,16 +115,13 @@ class _ChatPageState extends State<ChatPage> {
       if (_isAutoSpeakMode) {
         _currentSpeakPhrase = null;
         _speakNextInQueue();
-        return;
-      }
-      if (_currentSentenceIndex < _currentSentences.length) {
-        _speakNextSentence();
       } else {
+        // При текущей архитектуре весь голос идёт через очередь автоозвучки
+        // (_isAutoSpeakMode); это на всякий случай, чтобы "_isSpeaking" не
+        // зависало в true, если сюда всё же попали в обход очереди.
         setState(() {
           _isSpeaking = false;
-          _currentMessageId = null;
-          _currentSentences = [];
-          _currentSentenceIndex = 0;
+          _isAudioPlaying = false;
         });
       }
     });
@@ -425,35 +421,61 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _prepareSentences(String text) {
-    _currentSentences = text
-        .split(RegExp(r'(?<=[.!?])\s+'))
-        .where((s) => s.trim().isNotEmpty)
-        .toList();
-    _currentSentenceIndex = 0;
+  /// Останавливает всё, что сейчас звучит (TTS или локальный голос),
+  /// не запуская ничего нового. Общая точка для паузы и для рестарта
+  /// перед повторным чтением — чтобы озвучки никогда не накладывались.
+  Future<void> _stopCurrentPlayback() async {
+    _manuallyStopped = true;
+    await _tts.stop();
+    await _audioPlayer.stop();
   }
 
-  Future<void> _speakNextSentence() async {
-    if (_currentSentenceIndex >= _currentSentences.length) return;
-    final sentence = _currentSentences[_currentSentenceIndex];
-    _currentSentenceIndex++;
-    await _tts.speak(sentence);
-  }
-
-  Future<void> _playPauseLastAiMessage(ChatProvider chatProvider) async {
+  /// Ищет последнее сообщение ИИ в текущем чате (или null, если такого нет).
+  ChatMessage? _findLastAiMessage(ChatProvider chatProvider) {
     final messages = chatProvider.currentChat?.messages ?? [];
-    if (messages.isEmpty) return;
+    if (messages.isEmpty) return null;
     final lastAIMessage = messages.reversed.firstWhere(
       (m) => !m.isUser,
       orElse: () => messages.last,
     );
-    if (lastAIMessage.isUser) return;
+    return lastAIMessage.isUser ? null : lastAIMessage;
+  }
+
+  /// Останавливает текущее воспроизведение и заново запускает озвучку
+  /// сообщения [message] с самого начала — тем же путём (тот же голос,
+  /// тот же порядок фраз), что и автоматическая озвучка нового ответа.
+  /// Используется и кнопкой "Повторить", и кнопкой "Play", когда нечего
+  /// возобновлять (сообщение уже дочитано или ещё не начато).
+  Future<void> _restartAutoSpeak(
+    ChatMessage message,
+    ChatProvider chatProvider,
+    LanguageProvider languageProvider,
+  ) async {
+    await _stopCurrentPlayback();
+    final hasUserMessages =
+        (chatProvider.currentChat?.messages ?? []).any((m) => m.isUser);
+    // Снимаем защиту от повторного запуска — иначе _startAutoSpeak
+    // проигнорирует уже озвученное сообщение.
+    _lastSpokenMessageId = null;
+    _startAutoSpeak(
+      message.id,
+      message.text,
+      message.suggestedResponses ?? [],
+      language: languageProvider.currentLanguage,
+      includeFollowUpPrompt: hasUserMessages,
+    );
+  }
+
+  Future<void> _playPauseLastAiMessage(
+    ChatProvider chatProvider,
+    LanguageProvider languageProvider,
+  ) async {
+    final lastAIMessage = _findLastAiMessage(chatProvider);
+    if (lastAIMessage == null) return;
 
     // Пауза: уже читаем это сообщение
     if (_isSpeaking && _currentMessageId == lastAIMessage.id) {
-      _manuallyStopped = true;
-      await _tts.stop();
-      await _audioPlayer.stop();
+      await _stopCurrentPlayback();
       setState(() {
         _isSpeaking = false;
         _isAudioPlaying = false;
@@ -461,7 +483,7 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
 
-    // Продолжение после паузы: если были в режиме очереди (текст + кнопки)
+    // Продолжение после паузы: были в процессе очереди (ответ + приглашение)
     final canResumeQueue = _currentMessageId == lastAIMessage.id &&
         _isAutoSpeakMode &&
         (_currentSpeakPhrase != null || _autoSpeakQueue.isNotEmpty);
@@ -478,14 +500,9 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
 
-    // Новое сообщение или обычный режим по предложениям
-    if (_currentMessageId != lastAIMessage.id) {
-      _currentMessageId = lastAIMessage.id;
-      _prepareSentences(lastAIMessage.text);
-    }
-    if (_currentSentenceIndex < _currentSentences.length) {
-      await _speakNextSentence();
-    }
+    // Сообщение уже полностью дочитано (или ещё не звучало) — читаем заново,
+    // тем же голосом и в том же порядке, что и при автоозвучке.
+    await _restartAutoSpeak(lastAIMessage, chatProvider, languageProvider);
   }
 
   void _scrollToBottom() {
@@ -922,18 +939,27 @@ class _ChatPageState extends State<ChatPage> {
                     color: Colors.white,
                   ),
                   tooltip: l10n.autoPlay,
-                  onPressed: () => _playPauseLastAiMessage(chatProvider),
+                  // Пока грузится новый ответ, играть/на паузу нечего —
+                  // кнопка временно отключена, чтобы не озвучить старое
+                  // сообщение поверх экрана ожидания нового.
+                  onPressed: chatProvider.isLoading
+                      ? null
+                      : () => _playPauseLastAiMessage(chatProvider, languageProvider),
                 ),
                 IconButton(
                   icon: const Icon(Icons.repeat),
                   tooltip: l10n.repeatLast,
-                  onPressed: () async {
-                    // Повторить последнее сообщение заново
-                    _currentMessageId = null;
-                    _currentSentences = [];
-                    _currentSentenceIndex = 0;
-                    await _playPauseLastAiMessage(chatProvider);
-                  },
+                  onPressed: chatProvider.isLoading
+                      ? null
+                      : () async {
+                          final lastAIMessage = _findLastAiMessage(chatProvider);
+                          if (lastAIMessage == null) return;
+                          await _restartAutoSpeak(
+                            lastAIMessage,
+                            chatProvider,
+                            languageProvider,
+                          );
+                        },
                 ),
               ],
             ),
@@ -981,6 +1007,17 @@ class _ChatPageState extends State<ChatPage> {
                     color: const Color(0xFF27AE60),
                     child: InkWell(
                       onTap: () async {
+                        // Если предыдущий ответ ещё озвучивается (пользователь
+                        // не стал дожидаться конца) — останавливаем его, чтобы
+                        // старая и новая озвучка не звучали одновременно.
+                        await _stopCurrentPlayback();
+                        setState(() {
+                          _isSpeaking = false;
+                          _isAudioPlaying = false;
+                          _isAutoSpeakMode = false;
+                          _currentSpeakPhrase = null;
+                          _autoSpeakQueue = [];
+                        });
                         await chatProvider.sendMessage(suggestion, language: languageProvider.currentLanguage);
                       },
                       borderRadius: BorderRadius.circular(12),
