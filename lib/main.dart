@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'services/chat_storage_service.dart';
+import 'services/local_tts_service.dart';
 import 'providers/chat_provider.dart';
 import 'providers/language_provider.dart';
 import 'pages/home_page.dart';
@@ -17,6 +20,12 @@ void main() async {
   final storageService = ChatStorageService();
   await storageService.init();
 
+  // Один инстанс на всё приложение: модель распаковывается и грузится в
+  // фоновый изолят один раз при старте приложения, а не при каждом входе
+  // в чат — дальше между чатами она переиспользуется.
+  final localTtsService = LocalTtsService();
+  unawaited(localTtsService.ensureInitialized());
+
   // Keep the screen awake while app is running.
   await WakelockPlus.enable();
 
@@ -24,6 +33,7 @@ void main() async {
     MultiProvider(
       providers: [
         Provider<ChatStorageService>(create: (_) => storageService),
+        Provider<LocalTtsService>(create: (_) => localTtsService),
         ChangeNotifierProvider(
           create: (_) => LanguageProvider(),
         ),

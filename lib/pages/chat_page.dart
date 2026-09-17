@@ -6,10 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import '../providers/chat_provider.dart';
-import '../services/gemini_tts_service.dart';
+import '../services/local_tts_service.dart';
 import '../providers/language_provider.dart';
 import '../services/chat_storage_service.dart';
 import '../l10n/app_localizations.dart';
@@ -34,8 +33,16 @@ class _ChatPageState extends State<ChatPage> {
   bool _isSpeaking = false;
   /// true только когда реально идёт воспроизведение (не во время ожидания TTS)
   bool _isAudioPlaying = false;
-  bool _usingGeminiVoice = true;
+  /// Локальный офлайн-голос (немецкий, sherpa-onnx). Для русского языка
+  /// используется системный flutter_tts — отдельной модели голоса для него нет.
+  /// Общий на всё приложение (см. main.dart) — не пересоздаётся и не
+  /// перегружается при каждом входе в чат.
+  late final LocalTtsService _localTts;
   double _speechRate = 0.53;
+  double _musicVolume = 0.3;
+  bool _musicMuted = false;
+  /// Пока true, во время озвучки ответа вместо видео показывается текст ответа.
+  bool _showTranscriptInsteadOfVideo = false;
   int _lastMessageCount = 0;
   String? _lastSpokenMessageId;
 
@@ -63,6 +70,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
+    _localTts = Provider.of<LocalTtsService>(context, listen: false);
     _scrollController = ScrollController();
     _audioPlayer.onPlayerComplete.listen((_) {
       if (!mounted) return;
@@ -86,6 +94,15 @@ class _ChatPageState extends State<ChatPage> {
     final rate = await storage.getSpeechRate();
     await _tts.setSpeechRate(rate);
     if (mounted) setState(() => _speechRate = rate);
+    final musicVolume = await storage.getMusicVolume();
+    if (mounted) setState(() => _musicVolume = musicVolume);
+    await _applyMusicVolume();
+
+    // Заранее готовим локальную немецкую модель голоса, чтобы к моменту
+    // первого ответа ИИ она уже была распакована и загружена.
+    if (languageProvider.isGerman) {
+      unawaited(_localTts.ensureInitialized());
+    }
 
     _tts.setStartHandler(() {
       setState(() {
@@ -129,6 +146,7 @@ class _ChatPageState extends State<ChatPage> {
         return;
       }
       await controller.setLooping(true);
+      await controller.setVolume(_effectiveMusicVolume);
       setState(() {
         if (previousController != null && previousController != controller) {
           previousController.dispose();
@@ -228,24 +246,28 @@ class _ChatPageState extends State<ChatPage> {
     }
     final next = _autoSpeakQueue.removeAt(0);
     _currentSpeakPhrase = next;
-    if (_usingGeminiVoice) {
-      _playPhraseWithGeminiOrFallback(next);
+    _speakPhrase(next);
+  }
+
+  /// Немецкий — локальный офлайн-голос; для остальных языков (сейчас — русский)
+  /// отдельной модели нет, используется системный flutter_tts.
+  Future<void> _speakPhrase(String phrase) async {
+    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    if (languageProvider.isGerman) {
+      await _playPhraseWithLocalVoice(phrase);
     } else {
-      _tts.speak(next);
+      await _tts.speak(phrase);
     }
   }
 
-  Future<void> _playPhraseWithGeminiOrFallback(String phrase) async {
-    final wavBytes = await generateSpeechFromGemini(phrase);
+  Future<void> _playPhraseWithLocalVoice(String phrase) async {
+    final path = await _localTts.synthesizeToWavFile(phrase, speed: _speechRate);
     if (!mounted) return;
-    if (wavBytes != null) {
+    if (path != null) {
       try {
-        final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/gemini_tts_${DateTime.now().millisecondsSinceEpoch}.wav');
-        await file.writeAsBytes(wavBytes);
-        if (!mounted) return;
         setState(() => _isAudioPlaying = true);
-        await _audioPlayer.play(DeviceFileSource(file.path));
+        await _audioPlayer.play(DeviceFileSource(path));
+        final file = File(path);
         if (file.existsSync()) file.deleteSync();
       } catch (_) {
         if (mounted) _tts.speak(phrase);
@@ -325,10 +347,81 @@ class _ChatPageState extends State<ChatPage> {
     if (mounted) setState(() => _speechRate = value);
   }
 
+  /// Реальная громкость с учётом выключения звука кнопкой mute.
+  double get _effectiveMusicVolume => _musicMuted ? 0.0 : _musicVolume;
+
+  Future<void> _applyMusicVolume() async {
+    await _waitingVideoController?.setVolume(_effectiveMusicVolume);
+  }
+
+  Future<void> _showMusicVolumeDialog(AppLocalizations l10n) async {
+    final storage = Provider.of<ChatStorageService>(context, listen: false);
+    double value = _musicVolume;
+    bool muted = _musicMuted;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(l10n.musicVolume),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    icon: Icon(muted ? Icons.volume_off : Icons.volume_up),
+                    tooltip: muted ? l10n.unmuteMusic : l10n.muteMusic,
+                    onPressed: () {
+                      muted = !muted;
+                      _musicMuted = muted;
+                      setDialogState(() {});
+                      _applyMusicVolume();
+                    },
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: value,
+                      min: 0.0,
+                      max: 1.0,
+                      divisions: 20,
+                      onChanged: (v) {
+                        value = v;
+                        _musicVolume = v;
+                        setDialogState(() {});
+                        _applyMusicVolume();
+                        storage.setMusicVolume(v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              Text('${(value * 100).round()}%'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _musicVolume = value;
+        _musicMuted = muted;
+      });
+    }
+  }
+
   Future<void> _updateTtsLanguage() async {
     final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
     final languageCode = languageProvider.languageCode;
     await _tts.setLanguage(languageCode);
+    if (languageProvider.isGerman) {
+      unawaited(_localTts.ensureInitialized());
+    }
   }
 
   void _prepareSentences(String text) {
@@ -377,12 +470,7 @@ class _ChatPageState extends State<ChatPage> {
         _manuallyStopped = false;
       });
       if (_currentSpeakPhrase != null) {
-        final phrase = _currentSpeakPhrase!;
-        if (_usingGeminiVoice) {
-          _playPhraseWithGeminiOrFallback(phrase);
-        } else {
-          _tts.speak(phrase);
-        }
+        _speakPhrase(_currentSpeakPhrase!);
       } else {
         _speakNextInQueue();
       }
@@ -417,6 +505,8 @@ class _ChatPageState extends State<ChatPage> {
     AppLocalizations l10n,
   ) {
     if (chatProvider.errorMessage != null) {
+      final retryAfter = chatProvider.aiRetryAfterSeconds;
+      final isRetryBlocked = chatProvider.isAiTemporarilyUnavailable;
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -443,19 +533,25 @@ class _ChatPageState extends State<ChatPage> {
               Material(
                 elevation: 3,
                 borderRadius: BorderRadius.circular(12),
-                color: const Color(0xFF3498DB),
+                color: isRetryBlocked
+                    ? const Color(0xFF95A5A6)
+                    : const Color(0xFF3498DB),
                 child: InkWell(
-                  onTap: () async {
-                    await chatProvider.retryLastMessage(
-                      language: languageProvider.currentLanguage,
-                    );
-                  },
+                  onTap: isRetryBlocked
+                      ? null
+                      : () async {
+                          await chatProvider.retryLastMessage(
+                            language: languageProvider.currentLanguage,
+                          );
+                        },
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     child: Center(
                       child: Text(
-                        l10n.retry,
+                        isRetryBlocked
+                            ? '${l10n.retry} (${retryAfter}s)'
+                            : l10n.retry,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
@@ -610,10 +706,12 @@ class _ChatPageState extends State<ChatPage> {
       switchInCurve: Curves.easeInOut,
       switchOutCurve: Curves.easeInOut,
       child: Column(
-        key: ValueKey('answer-${message.id}'),
+        key: ValueKey('answer-${message.id}-$_showTranscriptInsteadOfVideo'),
         children: [
           Expanded(
-            child: _buildVideoBackground(),
+            child: _showTranscriptInsteadOfVideo
+                ? _buildTranscriptView(message)
+                : _buildVideoBackground(),
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 24),
@@ -621,6 +719,25 @@ class _ChatPageState extends State<ChatPage> {
             child: const VoiceWaveform(isSpeaking: true),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Показывает текст читаемого сейчас ответа вместо фонового видео.
+  Widget _buildTranscriptView(ChatMessage message) {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFECF0F1),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          message.text,
+          style: const TextStyle(
+            fontSize: 20,
+            height: 1.5,
+            color: Color(0xFF2C3E50),
+          ),
+        ),
       ),
     );
   }
@@ -670,6 +787,8 @@ class _ChatPageState extends State<ChatPage> {
     _waitingVideoController?.dispose();
     _tts.stop();
     _audioPlayer.dispose();
+    // _localTts НЕ диспозим — это общий на всё приложение инстанс
+    // (см. main.dart), он должен пережить закрытие этого экрана.
     _scrollController.dispose();
     super.dispose();
   }
@@ -726,10 +845,10 @@ class _ChatPageState extends State<ChatPage> {
 
         return WillPopScope(
           onWillPop: () async {
-            chatProvider.clearSelection();
-            // ChatPage is rendered inside HomePage body (not as a pushed route).
-            // Prevent popping the app route to desktop on system back.
-            return false;
+            chatProvider.exitChat();
+            // ChatPage — обычный маршрут: системная кнопка "Назад" должна
+            // вернуть на предыдущий экран (список тем/подтем), как и обычный pop.
+            return true;
           },
           child: Scaffold(
             appBar: AppBar(
@@ -759,16 +878,34 @@ class _ChatPageState extends State<ChatPage> {
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
-                  chatProvider.clearSelection();
-                  // Возвращаемся на стартовый экран (HomePage)
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  chatProvider.exitChat();
+                  // Возвращаемся на предыдущий экран (список тем/подтем)
+                  Navigator.of(context).pop();
                 },
               ),
               actions: [
                 IconButton(
+                  icon: Icon(_showTranscriptInsteadOfVideo
+                      ? Icons.subtitles
+                      : Icons.subtitles_off),
+                  tooltip: _showTranscriptInsteadOfVideo
+                      ? l10n.showVideoInsteadOfText
+                      : l10n.showTextInsteadOfVideo,
+                  onPressed: () => setState(() {
+                    _showTranscriptInsteadOfVideo = !_showTranscriptInsteadOfVideo;
+                  }),
+                ),
+                IconButton(
                   icon: const Icon(Icons.speed),
                   tooltip: l10n.speechSpeed,
                   onPressed: () => _showSpeechRateDialog(l10n),
+                ),
+                IconButton(
+                  icon: Icon((_musicVolume == 0 || _musicMuted)
+                      ? Icons.music_off
+                      : Icons.music_note),
+                  tooltip: l10n.musicVolume,
+                  onPressed: () => _showMusicVolumeDialog(l10n),
                 ),
                 IconButton(
                   icon: Icon(

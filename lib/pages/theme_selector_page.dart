@@ -4,6 +4,7 @@ import '../providers/chat_provider.dart';
 import '../providers/language_provider.dart';
 import '../models/theme_data.dart';
 import '../models/subtopics_generator.dart';
+import 'chat_page.dart';
 
 class ThemeSelectorPage extends StatelessWidget {
   const ThemeSelectorPage({Key? key}) : super(key: key);
@@ -29,9 +30,11 @@ class ThemeSelectorPage extends StatelessWidget {
     );
   }
 
-  Widget _buildCategoriesPage(
-      BuildContext context, ChatProvider chatProvider) {
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+  Widget _buildCategoriesPage(BuildContext context, ChatProvider chatProvider) {
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
     return Scaffold(
       appBar: AppBar(
@@ -55,9 +58,15 @@ class ThemeSelectorPage extends StatelessWidget {
     );
   }
 
-  Widget _buildCategoryTile(BuildContext context, ThemeCategory category,
-      ChatProvider chatProvider) {
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+  Widget _buildCategoryTile(
+    BuildContext context,
+    ThemeCategory category,
+    ChatProvider chatProvider,
+  ) {
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -94,14 +103,11 @@ class ThemeSelectorPage extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   category.getDescription(isGerman),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: Colors.white70,
-                  ),
+                  style: const TextStyle(fontSize: 16, color: Colors.white70),
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  isGerman 
+                  isGerman
                       ? '${category.subcategories.length} Unterkategorien →'
                       : '${category.subcategories.length} подсфер →',
                   style: const TextStyle(
@@ -119,9 +125,14 @@ class ThemeSelectorPage extends StatelessWidget {
   }
 
   Widget _buildSubcategoryPage(
-      BuildContext context, ChatProvider chatProvider) {
+    BuildContext context,
+    ChatProvider chatProvider,
+  ) {
     final category = chatProvider.selectedCategory!;
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
 
     return Scaffold(
@@ -142,7 +153,11 @@ class ThemeSelectorPage extends StatelessWidget {
           itemBuilder: (context, index) {
             final subcategory = category.subcategories[index];
             return _buildSubcategoryTile(
-                context, subcategory, chatProvider, category);
+              context,
+              subcategory,
+              chatProvider,
+              category,
+            );
           },
         ),
       ),
@@ -155,7 +170,10 @@ class ThemeSelectorPage extends StatelessWidget {
     ChatProvider chatProvider,
     ThemeCategory category,
   ) {
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -208,11 +226,13 @@ class ThemeSelectorPage extends StatelessWidget {
     );
   }
 
-  Widget _buildTopicsPage(
-      BuildContext context, ChatProvider chatProvider) {
+  Widget _buildTopicsPage(BuildContext context, ChatProvider chatProvider) {
     final category = chatProvider.selectedCategory!;
     final subcategory = chatProvider.selectedSubcategory!;
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
 
     return Scaffold(
@@ -222,108 +242,16 @@ class ThemeSelectorPage extends StatelessWidget {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            chatProvider.selectSubcategory(
-              ThemeSubcategory(id: '', name: '', topics: []),
-            );
+            chatProvider.clearSubcategory();
           },
         ),
       ),
       body: SafeArea(
-        child: ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: subcategory.topics.length,
-          itemBuilder: (context, index) {
-            final topic = subcategory.topics[index];
-            return _buildTopicTile(context, topic, chatProvider);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopicTile(
-      BuildContext context, Topic topic, ChatProvider chatProvider) {
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
-    final isGerman = languageProvider.isGerman;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Material(
-        elevation: 2,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: () async {
-            // Получаем подтемы (предопределенные или сгенерированные)
-            List<Topic> subtopics = topicSubtopics[topic.id] ?? [];
-            
-            // Если нет предопределенных подтем, генерируем их
-            if (subtopics.isEmpty) {
-              subtopics = generateSubtopicsForTopic(
-                topic.id,
-                topic.getName(isGerman),
-                languageProvider.currentLanguage,
-              );
-            }
-            
-            // Всегда показываем подтемы
-            if (subtopics.isNotEmpty) {
-              // Отдельный экран выбора подтем
-              // ignore: use_build_context_synchronously
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => SubtopicSelectorPage(
-                    parentTopic: topic,
-                    subtopics: subtopics,
-                  ),
-                ),
-              );
-              return;
-            }
-
-            // Если подтем нет, сразу создаём чат по выбранной теме
-            await chatProvider.startNewChat(topic, language: languageProvider.currentLanguage);
-            if (context.mounted) {
-              // Возвращаемся на стартовый экран (HomePage)
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 4,
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  topic.getName(isGerman),
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2C3E50),
-                  ),
-                ),
-                if (topic.getDescription(isGerman) != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      topic.getDescription(isGerman)!,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF7F8C8D),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+        // Отдельный StatefulWidget: список перемешивается один раз при заходе
+        // в подкатегорию, а не на каждый ребилд экрана.
+        child: _TopicsListView(
+          subcategory: subcategory,
+          chatProvider: chatProvider,
         ),
       ),
     );
@@ -347,6 +275,161 @@ class ThemeSelectorPage extends StatelessWidget {
   }
 }
 
+/// Список тем внутри подкатегории. Порядок перемешивается один раз при
+/// входе в подкатегорию ([initState]/при смене подкатегории) — каждый визит
+/// даёт новый случайный порядок, но список не «прыгает» на ребилдах экрана.
+class _TopicsListView extends StatefulWidget {
+  final ThemeSubcategory subcategory;
+  final ChatProvider chatProvider;
+
+  const _TopicsListView({
+    required this.subcategory,
+    required this.chatProvider,
+  });
+
+  @override
+  State<_TopicsListView> createState() => _TopicsListViewState();
+}
+
+class _TopicsListViewState extends State<_TopicsListView> {
+  late List<Topic> _shuffledTopics;
+
+  @override
+  void initState() {
+    super.initState();
+    _shuffleTopics();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TopicsListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.subcategory.id != widget.subcategory.id) {
+      _shuffleTopics();
+    }
+  }
+
+  void _shuffleTopics() {
+    _shuffledTopics = List<Topic>.from(widget.subcategory.topics)..shuffle();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _shuffledTopics.length,
+      itemBuilder: (context, index) {
+        return _buildTopicTile(
+          context,
+          _shuffledTopics[index],
+          widget.chatProvider,
+        );
+      },
+    );
+  }
+}
+
+Widget _buildTopicTile(
+  BuildContext context,
+  Topic topic,
+  ChatProvider chatProvider,
+) {
+  final languageProvider = Provider.of<LanguageProvider>(
+    context,
+    listen: false,
+  );
+  final isGerman = languageProvider.isGerman;
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Material(
+      elevation: 2,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () async {
+          // Получаем подтемы (предопределенные или сгенерированные)
+          List<Topic> subtopics = topicSubtopics[topic.id] ?? [];
+
+          // Если нет предопределенных подтем, генерируем их
+          if (subtopics.isEmpty) {
+            subtopics = generateSubtopicsForTopic(
+              topic.id,
+              topic.getName(isGerman),
+              languageProvider.currentLanguage,
+            );
+          }
+
+          // Всегда показываем подтемы (копия — исходный список может быть
+          // предопределённой неизменяемой константой, ..shuffle() ломает её)
+          if (subtopics.isNotEmpty) {
+            final shuffledSubtopics = List<Topic>.from(subtopics)..shuffle();
+            // Отдельный экран выбора подтем
+            // ignore: use_build_context_synchronously
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder:
+                    (_) => SubtopicSelectorPage(
+                      parentTopic: topic,
+                      subtopics: shuffledSubtopics,
+                    ),
+              ),
+            );
+            return;
+          }
+
+          // Если подтем нет, сразу создаём чат по выбранной теме
+          await chatProvider.startNewChat(
+            topic,
+            language: languageProvider.currentLanguage,
+          );
+          if (context.mounted && chatProvider.currentChat != null) {
+            // Открываем чат отдельным экраном, чтобы "Назад" вернул сюда же
+            // ignore: use_build_context_synchronously
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ChatPage(chat: chatProvider.currentChat!),
+              ),
+            );
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                topic.getName(isGerman),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF2C3E50),
+                ),
+              ),
+              if (topic.getDescription(isGerman) != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    topic.getDescription(isGerman)!,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF7F8C8D),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Экран выбора подтем внутри конкретной темы.
 class SubtopicSelectorPage extends StatelessWidget {
   final Topic parentTopic;
@@ -360,7 +443,10 @@ class SubtopicSelectorPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final languageProvider = Provider.of<LanguageProvider>(context, listen: false);
+    final languageProvider = Provider.of<LanguageProvider>(
+      context,
+      listen: false,
+    );
     final isGerman = languageProvider.isGerman;
     return Scaffold(
       appBar: AppBar(
@@ -369,73 +455,81 @@ class SubtopicSelectorPage extends StatelessWidget {
       ),
       body: SafeArea(
         child: Consumer<ChatProvider>(
-        builder: (context, chatProvider, _) {
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: subtopics.length,
-            itemBuilder: (context, index) {
-              final subtopic = subtopics[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Material(
-                  elevation: 2,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    onTap: () async {
-                      await chatProvider.startNewChat(
-                        subtopic, 
-                        language: languageProvider.currentLanguage,
-                        parentTopic: parentTopic,
-                      );
-                      if (context.mounted) {
-                        // Возвращаемся на стартовый экран (HomePage)
-                        Navigator.of(context).popUntil((route) => route.isFirst);
-                      }
-                    },
+          builder: (context, chatProvider, _) {
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: subtopics.length,
+              itemBuilder: (context, index) {
+                final subtopic = subtopics[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Material(
+                    elevation: 2,
                     borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            subtopic.getName(isGerman),
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C3E50),
+                    child: InkWell(
+                      onTap: () async {
+                        await chatProvider.startNewChat(
+                          subtopic,
+                          language: languageProvider.currentLanguage,
+                          parentTopic: parentTopic,
+                        );
+                        if (context.mounted &&
+                            chatProvider.currentChat != null) {
+                          // Открываем чат отдельным экраном, чтобы "Назад" вернул сюда же
+                          // ignore: use_build_context_synchronously
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) =>
+                                      ChatPage(chat: chatProvider.currentChat!),
                             ),
-                          ),
-                          if (subtopic.getDescription(isGerman) != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                subtopic.getDescription(isGerman)!,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Color(0xFF7F8C8D),
-                                ),
+                          );
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              subtopic.getName(isGerman),
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF2C3E50),
                               ),
                             ),
-                        ],
+                            if (subtopic.getDescription(isGerman) != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(
+                                  subtopic.getDescription(isGerman)!,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Color(0xFF7F8C8D),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
-          );
-        },
+                );
+              },
+            );
+          },
         ),
       ),
     );

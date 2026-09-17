@@ -4,7 +4,6 @@ import '../providers/chat_provider.dart';
 import '../providers/language_provider.dart';
 import '../l10n/app_localizations.dart';
 import 'theme_selector_page.dart';
-import 'chat_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -17,11 +16,6 @@ class HomePage extends StatelessWidget {
         child: Consumer2<ChatProvider, LanguageProvider>(
         builder: (context, chatProvider, languageProvider, _) {
           final l10n = AppLocalizations(languageProvider.currentLanguage);
-          
-          // If in chat, show chat page
-          if (chatProvider.currentChat != null) {
-            return ChatPage(chat: chatProvider.currentChat!);
-          }
 
           // Main menu
           return SingleChildScrollView(

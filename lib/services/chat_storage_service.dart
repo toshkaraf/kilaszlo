@@ -7,6 +7,8 @@ class ChatStorageService {
   static const String _chatsKey = 'kilaszlo_chats';
   static const String _speechRateKey = 'kilaszlo_speech_rate';
   static const double _defaultSpeechRate = 0.4; // ещё на четверть медленнее прежнего 0.53
+  static const String _musicVolumeKey = 'kilaszlo_music_volume';
+  static const double _defaultMusicVolume = 0.3; // фоновая музыка тише голоса
   late SharedPreferences _prefs;
 
   Future<void> init() async {
@@ -95,5 +97,14 @@ class ChatStorageService {
 
   Future<void> setSpeechRate(double value) async {
     await _prefs.setDouble(_speechRateKey, value);
+  }
+
+  Future<double> getMusicVolume() async {
+    final v = _prefs.getDouble(_musicVolumeKey);
+    return v ?? _defaultMusicVolume;
+  }
+
+  Future<void> setMusicVolume(double value) async {
+    await _prefs.setDouble(_musicVolumeKey, value);
   }
 }

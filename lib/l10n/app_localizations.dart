@@ -29,6 +29,11 @@ class AppLocalizations {
   String get autoPlay => isGerman ? 'Automatisches Vorlesen' : 'Автовоспроизведение';
   String get repeatLast => isGerman ? 'Letzte Nachricht wiederholen' : 'Повторить последнее';
   String get speechSpeed => isGerman ? 'Sprechtempo' : 'Скорость озвучки';
+  String get musicVolume => isGerman ? 'Lautstärke der Hintergrundmusik' : 'Громкость фоновой музыки';
+  String get muteMusic => isGerman ? 'Musik stummschalten' : 'Выключить музыку';
+  String get unmuteMusic => isGerman ? 'Musik einschalten' : 'Включить музыку';
+  String get showTextInsteadOfVideo => isGerman ? 'Text statt Video anzeigen' : 'Показать текст вместо видео';
+  String get showVideoInsteadOfText => isGerman ? 'Video anzeigen' : 'Показать видео';
 
   // Errors
   String get errorCreatingChat => isGerman 

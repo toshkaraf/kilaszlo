@@ -44,9 +44,9 @@ dependencies:
   # JSON serialization
   json_annotation: ^4.8.1
   
-  # Text to speech (запасной вариант, если Gemini TTS недоступен)
+  # Text to speech (системный голос — для русского и как запасной вариант)
   flutter_tts: ^4.2.5
-  # Воспроизведение аудио (голос Gemini TTS)
+  # Воспроизведение аудио (локальный немецкий голос — см. LocalTtsService)
   audioplayers: ^6.0.0
   video_player: ^2.9.2
   path_provider: ^2.1.2
@@ -63,6 +63,9 @@ dependencies:
   # Environment variables
   flutter_dotenv: ^5.1.0
   wakelock_plus: ^1.4.0
+  sherpa_onnx: ^1.13.8
+  archive: ^4.3.0
+  path: ^1.9.1
   
 
 dev_dependencies:
@@ -90,6 +93,10 @@ flutter:
     - .env
     - assets/thinking_woman_de.png
     - assets/waiting_bg.mp4
+    # Локальный офлайн-голос (немецкий, VITS/Piper "Thorsten", medium-quality —
+    # баланс чёткости и скорости синтеза, через sherpa-onnx). Распаковывается
+    # один раз при первом запуске в LocalTtsService.
+    - assets/tts/vits-piper-de_DE-thorsten-medium.tar.bz2
 
   # To add assets to your application, add an assets section, like this:
   # assets:
