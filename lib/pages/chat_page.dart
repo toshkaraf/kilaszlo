@@ -59,7 +59,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _manuallyStopped = false;
   bool _isWaitingVisualActive = false;
   bool _isWaitingMode = false;
-  bool _isAnswerPlaybackPending = false;
   bool _showWaitingVideo = false;
   bool _isVideoReady = false;
   bool _isVideoInitializing = false;
@@ -239,7 +238,6 @@ class _ChatPageState extends State<ChatPage> {
         _isSpeaking = false;
         _isAudioPlaying = false;
         _isAutoSpeakMode = false;
-        _isAnswerPlaybackPending = false;
         _currentSpeakPhrase = null;
       });
       return;
@@ -289,6 +287,7 @@ class _ChatPageState extends State<ChatPage> {
     String text,
     List<String> buttons, {
     required AppLanguage language,
+    bool includeFollowUpPrompt = true,
   }) {
     if (messageId == _lastSpokenMessageId) return;
     _lastSpokenMessageId = messageId;
@@ -296,7 +295,10 @@ class _ChatPageState extends State<ChatPage> {
     _manuallyStopped = false;
     _currentSpeakPhrase = null;
     // Сначала основной ответ, затем короткое приглашение выбрать следующий аспект.
-    final followUpPrompt = _buildFollowUpPrompt(language).trim();
+    // Для самого первого сообщения (вводная фраза до выбора темы) приглашение
+    // не нужно — она уже сама предлагает выбрать один из аспектов.
+    final followUpPrompt =
+        includeFollowUpPrompt ? _buildFollowUpPrompt(language).trim() : '';
     _autoSpeakQueue = [
       text,
       if (followUpPrompt.isNotEmpty) followUpPrompt,
@@ -304,7 +306,6 @@ class _ChatPageState extends State<ChatPage> {
     _isAutoSpeakMode = true;
     setState(() {
       _isSpeaking = true;
-      _isAnswerPlaybackPending = false;
     });
     _speakNextInQueue();
   }
@@ -575,10 +576,19 @@ class _ChatPageState extends State<ChatPage> {
       final isLastAI = !lastMsg.isUser;
       final suggestions = lastMsg.suggestedResponses ?? [];
       final hasUserMessages = messages.any((m) => m.isUser);
+      // Свежий ответ ИИ, который ещё не начали озвучивать (см. _startAutoSpeak,
+      // он выставляет _lastSpokenMessageId). Проверяется синхронно, в этом же
+      // build — в отличие от отдельного флага через setState в
+      // addPostFrameCallback, здесь нет промежуточного кадра с
+      // shouldShowWaiting=false, из-за которого видео/картинка ожидания
+      // раньше на миг сбрасывались и запускались заново.
+      final isNewUnspokenAnswer = isLastAI &&
+          suggestions.isNotEmpty &&
+          lastMsg.id != _lastSpokenMessageId;
       final shouldShowWaiting =
           hasUserMessages &&
           (chatProvider.isLoading ||
-              _isAnswerPlaybackPending ||
+              isNewUnspokenAnswer ||
               (isLastAI && _isSpeaking && !_isAudioPlaying));
       // Video + Voice-Player nur für echte Antwortphase nach User-Auswahl,
       // nicht für die initiale Intro-Stimme über den grünen Buttons.
@@ -809,18 +819,16 @@ class _ChatPageState extends State<ChatPage> {
         if (messages.isNotEmpty && !messages.last.isUser) {
           final lastMsg = messages.last;
           final suggestions = lastMsg.suggestedResponses ?? [];
+          // Самое первое сообщение в чате (до выбора темы пользователем) —
+          // это вводная фраза, она уже сама приглашает выбрать аспект,
+          // поэтому дублирующее приглашение после неё не нужно.
           final hasUserMessages = messages.any((m) => m.isUser);
           if (messages.length != _lastMessageCount) {
             _lastMessageCount = messages.length;
             if (suggestions.isNotEmpty) {
-              if (hasUserMessages) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  setState(() {
-                    _isAnswerPlaybackPending = true;
-                  });
-                });
-              }
+              // Экран ожидания остаётся показан сам по себе — см.
+              // isNewUnspokenAnswer в _buildChatBody, — здесь только
+              // планируем сам старт озвучки через секунду.
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 Future.delayed(const Duration(seconds: 1), () {
                   if (!mounted) return;
@@ -833,6 +841,7 @@ class _ChatPageState extends State<ChatPage> {
                       lastMsg.text,
                       suggestions,
                       language: languageProvider.currentLanguage,
+                      includeFollowUpPrompt: hasUserMessages,
                     );
                   }
                 });
